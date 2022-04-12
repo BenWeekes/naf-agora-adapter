@@ -22,6 +22,7 @@ class AgoraRtcAdapter {
     this.clientId=null;
     this.uid=null;
     this.vbg=false;
+    this.showLocal=false;
     this.virtualBackgroundInstance=null;
 	 
     this.serverTimeRequests = 0;
@@ -58,6 +59,9 @@ class AgoraRtcAdapter {
 
     if (obj.vbg) {
   	  this.vbg=obj.vbg;
+    }
+    if (obj.showLocal) {
+  	  this.showLocal=obj.showLocal;
     }
     this.easyrtc.joinRoom(this.room, null);
   }
@@ -429,6 +433,9 @@ async connectAgora() {
 	  this.userid=await this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null);
   }
 
+    	if (this.enableVideo && this.showLocal) {
+		this.localTracks.videoTrack.play("local-player");
+	}
 
   if (this.enableVideo || this.enableAudio) {
 
