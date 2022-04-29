@@ -22,14 +22,20 @@ class AgoraRtcAdapter {
     this.clientId = null;
     this.uid = null;
     this.vbg = false;
+    this.vbg0 = false;
     this.showLocal = false;
     this.virtualBackgroundInstance = null;
+ this.extension = null;
+ this.processor = null;
+ this.pipeProcessor = (track, processor) => {
+  track.pipe(processor).pipe(track.processorDestination);
+ }
+
 
     this.serverTimeRequests = 0;
     this.timeOffsets = [];
     this.avgTimeOffset = 0;
     this.agoraClient = null;
-    //AgoraRTC.loadModule(SegPlugin, {});
 
     this.easyrtc.setPeerOpenListener(clientId => {
       const clientConnection = this.easyrtc.getPeerConnectionByUserId(clientId);
@@ -59,10 +65,15 @@ class AgoraRtcAdapter {
 
     if (obj.vbg) {
        this.vbg = obj.vbg;
-       if (this.vbg) {
+    }
+
+    if (obj.vbg0) {
+       this.vbg0 = obj.vbg0;
+       if (this.vbg0) {
           AgoraRTC.loadModule(SegPlugin, {});
        }
     }
+
 
     if (obj.enableAvatar) {
       this.enableAvatar = obj.enableAvatar;
@@ -404,7 +415,7 @@ class AgoraRtcAdapter {
  else if (this.enableVideo && this.enableAudio) {
       [this.userid, this.localTracks.audioTrack, this.localTracks.videoTrack] = await Promise.all([
       this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null),
-      AgoraRTC.createMicrophoneAudioTrack(), AgoraRTC.createCameraVideoTrack("360p_4")]);
+      AgoraRTC.createMicrophoneAudioTrack(), AgoraRTC.createCameraVideoTrack({encoderConfig: '360p_4'})]);
     } else if (this.enableVideo) {
       [this.userid, this.localTracks.videoTrack] = await Promise.all([
       // Join the channel.
@@ -420,26 +431,49 @@ class AgoraRtcAdapter {
     if (this.enableVideo && this.showLocal) {
       this.localTracks.videoTrack.play("local-player");
     }
+	  
+    // select facetime camera if exists
+    let cams = await AgoraRTC.getCameras();
+    for (var i = 0; i < cams.length; i++) {
+      if (cams[i].label.indexOf("FaceTime") == 0) {
+	console.log("select FaceTime camera",cams[i].deviceId );
+    	await this.localTracks.videoTrack.setDevice(cams[i].deviceId);
+      }
+    }
+	  
 
-    if (this.enableVideo || this.enableAudio || this.enableAvatar) {
-
-      await this.agoraClient.publish(Object.values(this.localTracks));
-      console.log("publish success");
-
-      // Publish the local video and audio tracks to the channel.
-      if (this.enableVideo && this.vbg && this.localTracks.videoTrack) {
+    // Enable virtual background OLD Method
+    if (this.enableVideo && this.vbg0 && this.localTracks.videoTrack) {
         const imgElement = document.createElement('img');
         imgElement.onload = async () => {
           if (!this.virtualBackgroundInstance) {
             console.log("SEG INIT ", this.localTracks.videoTrack);
-            this.virtualBackgroundInstance = await SegPlugin.inject(this.localTracks.videoTrack, "/assets/wasms").catch(console.error);
+            this.virtualBackgroundInstance = await SegPlugin.inject(this.localTracks.videoTrack, "/assets/wasms0").catch(console.error);
             console.log("SEG INITED");
           }
           this.virtualBackgroundInstance.setOptions({ enable: true, background: imgElement });
         };
         imgElement.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAD0lEQVR4XmNg+M+AQDg5AOk9C/VkomzYAAAAAElFTkSuQmCC';
-      }
     }
+
+    // Enable virtual background New Method
+    if (this.enableVideo && this.vbg && this.localTracks.videoTrack) {
+
+	this.extension = new VirtualBackgroundExtension();
+	AgoraRTC.registerExtensions([this.extension]);
+	this.processor = this.extension.createProcessor();
+	await this.processor.init("/assets/wasms");
+	this.localTracks.videoTrack.pipe(this.processor).pipe(this.localTracks.videoTrack.processorDestination);
+	await this.processor.setOptions({ type: 'color', color:"#00ff00"});
+	await this.processor.enable();
+    }
+
+    // Publish the local video and audio tracks to the channel.
+    if (this.enableVideo || this.enableAudio || this.enableAvatar) {
+      await this.agoraClient.publish(Object.values(this.localTracks));
+      console.log("publish success");
+    }
+
   }
 
   /**
