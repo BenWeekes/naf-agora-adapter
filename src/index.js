@@ -366,11 +366,16 @@ class AgoraRtcAdapter {
     var that = this;
 
     if (this.enableVideo || this.enableAudio) {
-      this.agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+      //this.agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
+      this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "h264" });
+      this.agoraClient.setClientRole("host");
     } else {
-      this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "vp8" });
+      this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "h264" });
     }
 
+    this.agoraClient.on("user-joined", async (user) => {
+	    console.warn("user-joined",user);
+    });
     this.agoraClient.on("user-published", async (user, mediaType) => {
 
       let clientId = user.uid;
@@ -389,13 +394,36 @@ class AgoraRtcAdapter {
         if (pendingMediaRequests) pendingMediaRequests.audio.resolve(audioStream);
       }
 
+      let videoStream = null;
       if (mediaType === 'video') {
-        const videoStream = new MediaStream();
+        videoStream = new MediaStream();
         console.log("user.videoTrack ", user.videoTrack._mediaStreamTrack);
         videoStream.addTrack(user.videoTrack._mediaStreamTrack);
         clientMediaStreams.video = videoStream;
         if (pendingMediaRequests) pendingMediaRequests.video.resolve(videoStream);
         //user.videoTrack
+      }
+
+      if (clientId == 'CCC') {
+	  if (mediaType === 'video') {
+		// document.getElementById("video360").srcObject=videoStream;
+		 //document.querySelector("#video360").setAttribute("src", videoStream);
+		 //document.querySelector("#video360").setAttribute("src", user.videoTrack._mediaStreamTrack);
+		 //document.querySelector("#video360").srcObject= user.videoTrack._mediaStreamTrack;
+		 document.querySelector("#video360").srcObject=videoStream;
+		 document.querySelector("#video360").play();
+	  }
+	  if (mediaType === 'audio') {
+		  user.audioTrack.play();
+	  }
+      }
+      if (clientId == 'DDD') {
+	  if (mediaType === 'video') {
+	  	user.videoTrack.play("video360");
+	  }
+	  if (mediaType === 'audio') {
+		  user.audioTrack.play();
+	  }
       }
     });
 
@@ -428,19 +456,21 @@ class AgoraRtcAdapter {
       this.userid = await this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null);
     }
 
+	  
+    // select facetime camera if exists
+    if (this.enableVideo) {
+	    let cams = await AgoraRTC.getCameras();
+	    for (var i = 0; i < cams.length; i++) {
+	      if (cams[i].label.indexOf("FaceTime") == 0) {
+		console.log("select FaceTime camera",cams[i].deviceId );
+	    	await this.localTracks.videoTrack.setDevice(cams[i].deviceId);
+	      }
+	    }
+    }
+	  
     if (this.enableVideo && this.showLocal) {
       this.localTracks.videoTrack.play("local-player");
     }
-	  
-    // select facetime camera if exists
-    let cams = await AgoraRTC.getCameras();
-    for (var i = 0; i < cams.length; i++) {
-      if (cams[i].label.indexOf("FaceTime") == 0) {
-	console.log("select FaceTime camera",cams[i].deviceId );
-    	await this.localTracks.videoTrack.setDevice(cams[i].deviceId);
-      }
-    }
-	  
 
     // Enable virtual background OLD Method
     if (this.enableVideo && this.vbg0 && this.localTracks.videoTrack) {
