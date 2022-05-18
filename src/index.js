@@ -18,6 +18,7 @@ class AgoraRtcAdapter {
     this.enableAvatar = false;
 
     this.localTracks = { videoTrack: null, audioTrack: null };
+    window.localTracks=this.localTracks;
     this.token = null;
     this.clientId = null;
     this.uid = null;
@@ -234,6 +235,9 @@ class AgoraRtcAdapter {
   getMediaStream(clientId, streamName = "audio") {
 
     console.log("BW73 getMediaStream ", clientId, streamName);
+   // if ( streamName = "audio") {
+	     //streamName = "bod_audio";
+    //}
 
     if (this.mediaStreams[clientId] && this.mediaStreams[clientId][streamName]) {
       NAF.log.write(`Already had ${streamName} for ${clientId}`);
@@ -248,6 +252,7 @@ class AgoraRtcAdapter {
         const audioPromise = new Promise((resolve, reject) => {
           pendingMediaRequests.audio = { resolve, reject };
         }).catch(e => NAF.log.warn(`${clientId} getMediaStream Audio Error`, e));
+
         pendingMediaRequests.audio.promise = audioPromise;
 
         const videoPromise = new Promise((resolve, reject) => {
@@ -365,12 +370,14 @@ class AgoraRtcAdapter {
     // Add an event listener to play remote tracks when remote user publishes.
     var that = this;
 
+    this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "vp8" });
     if (this.enableVideo || this.enableAudio) {
       //this.agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
-      this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "h264" });
+      //this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "h264" });
       this.agoraClient.setClientRole("host");
     } else {
-      this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "h264" });
+      //this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "h264" });
+      //this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "vp8" });
     }
 
     this.agoraClient.on("user-joined", async (user) => {
@@ -387,9 +394,11 @@ class AgoraRtcAdapter {
       const clientMediaStreams = that.mediaStreams[clientId] = that.mediaStreams[clientId] || {};
 
       if (mediaType === 'audio') {
+	      user.audioTrack.play();
+
         const audioStream = new MediaStream();
         console.log("user.audioTrack ", user.audioTrack._mediaStreamTrack);
-        audioStream.addTrack(user.audioTrack._mediaStreamTrack);
+        //audioStream.addTrack(user.audioTrack._mediaStreamTrack);
         clientMediaStreams.audio = audioStream;
         if (pendingMediaRequests) pendingMediaRequests.audio.resolve(audioStream);
       }
@@ -443,7 +452,7 @@ class AgoraRtcAdapter {
  else if (this.enableVideo && this.enableAudio) {
       [this.userid, this.localTracks.audioTrack, this.localTracks.videoTrack] = await Promise.all([
       this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null),
-      AgoraRTC.createMicrophoneAudioTrack(), AgoraRTC.createCameraVideoTrack({encoderConfig: '360p_4'})]);
+      AgoraRTC.createMicrophoneAudioTrack(), AgoraRTC.createCameraVideoTrack({encoderConfig: '480p_2'})]);
     } else if (this.enableVideo) {
       [this.userid, this.localTracks.videoTrack] = await Promise.all([
       // Join the channel.
