@@ -14,6 +14,7 @@ class AgoraRtcAdapter {
     this.pendingMediaRequests = new Map();
 
     this.enableVideo = false;
+    this.enableVideoFiltered = false;
     this.enableAudio = false;
     this.enableAvatar = false;
 
@@ -82,6 +83,10 @@ class AgoraRtcAdapter {
 
     if (obj.showLocal) {
       this.showLocal = obj.showLocal;
+    }
+
+    if (obj.enableVideoFiltered) {
+      this.enableVideoFiltered = obj.enableVideoFiltered;
     }
     this.easyrtc.joinRoom(this.room, null);
   }
@@ -371,7 +376,7 @@ class AgoraRtcAdapter {
     var that = this;
 
     this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "vp8" });
-    if (this.enableVideo || this.enableAudio) {
+    if (this.enableVideoFiltered || this.enableVideo || this.enableAudio) {
       //this.agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
       //this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "h264" });
       this.agoraClient.setClientRole("host");
@@ -449,6 +454,10 @@ class AgoraRtcAdapter {
         this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null),
         AgoraRTC.createMicrophoneAudioTrack(), AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: stream.getVideoTracks()[0] })]);
  }
+ else if (this.enableVideoFiltered && this.enableAudio) {
+      var stream = document.getElementById("canvas_secret").captureStream(30);
+      [this.userid, this.localTracks.audioTrack, this.localTracks.videoTrack] = await Promise.all([this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null), AgoraRTC.createMicrophoneAudioTrack(), AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: stream.getVideoTracks()[0] })]);
+ }
  else if (this.enableVideo && this.enableAudio) {
       [this.userid, this.localTracks.audioTrack, this.localTracks.videoTrack] = await Promise.all([
       this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null),
@@ -467,7 +476,7 @@ class AgoraRtcAdapter {
 
 	  
     // select facetime camera if exists
-    if (this.enableVideo) {
+    if (this.enableVideo && !this.enableVideoFiltered) {
 	    let cams = await AgoraRTC.getCameras();
 	    for (var i = 0; i < cams.length; i++) {
 	      if (cams[i].label.indexOf("FaceTime") == 0) {
