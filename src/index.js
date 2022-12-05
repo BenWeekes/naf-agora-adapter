@@ -75,17 +75,16 @@ class AgoraRtcAdapter {
       AgoraRTC.loadModule(SegPlugin, {});
     }
 
-
-    if (obj.enableAvatar) {
-      this.enableAvatar = obj.enableAvatar;
+    if (obj.enableAvatar && obj.enableAvatar=='true' ) {
+      this.enableAvatar = true;
     }
 
-    if (obj.showLocal) {
-      this.showLocal = obj.showLocal;
+    if (obj.showLocal  && obj.showLocal=='true') {
+      this.showLocal = true;
     }
 
-    if (obj.enableVideoFiltered) {
-      this.enableVideoFiltered = obj.enableVideoFiltered;
+    if (obj.enableVideoFiltered && obj.enableVideoFiltered=='true' ) {
+      this.enableVideoFiltered = true;
     }
     this.easyrtc.joinRoom(this.room, null);
   }
