@@ -19,7 +19,8 @@ class AgoraRtcAdapter {
     this.enableAvatar = false;
 
     this.localTracks = { videoTrack: null, audioTrack: null };
-    window.localTracks=this.localTracks;
+    window.localTracks = this.localTracks;
+    console.error("ASS ", window.localTracks);
     this.token = null;
     this.clientId = null;
     this.uid = null;
@@ -27,11 +28,11 @@ class AgoraRtcAdapter {
     this.vbg0 = false;
     this.showLocal = false;
     this.virtualBackgroundInstance = null;
- this.extension = null;
- this.processor = null;
- this.pipeProcessor = (track, processor) => {
-  track.pipe(processor).pipe(track.processorDestination);
- }
+    this.extension = null;
+    this.processor = null;
+    this.pipeProcessor = (track, processor) => {
+      track.pipe(processor).pipe(track.processorDestination);
+    }
 
 
     this.serverTimeRequests = 0;
@@ -65,15 +66,13 @@ class AgoraRtcAdapter {
     const obj = JSON.parse(json);
     this.room = obj.name;
 
-    if (obj.vbg) {
-       this.vbg = obj.vbg;
+    if (obj.vbg && obj.vbg=='true' ) {      
+      this.vbg = true;
     }
 
-    if (obj.vbg0) {
-       this.vbg0 = obj.vbg0;
-       if (this.vbg0) {
-          AgoraRTC.loadModule(SegPlugin, {});
-       }
+    if (obj.vbg0 && obj.vbg0=='true' ) {
+      this.vbg0 = true;
+      AgoraRTC.loadModule(SegPlugin, {});
     }
 
 
@@ -240,8 +239,8 @@ class AgoraRtcAdapter {
   getMediaStream(clientId, streamName = "audio") {
 
     console.log("BW73 getMediaStream ", clientId, streamName);
-   // if ( streamName = "audio") {
-	     //streamName = "bod_audio";
+    // if ( streamName = "audio") {
+    //streamName = "bod_audio";
     //}
 
     if (this.mediaStreams[clientId] && this.mediaStreams[clientId][streamName]) {
@@ -365,7 +364,7 @@ class AgoraRtcAdapter {
     this.easyrtc.disconnect();
   }
 
-  async handleUserPublished(user, mediaType) {}
+  async handleUserPublished(user, mediaType) { }
 
   handleUserUnpublished(user, mediaType) {
     console.log("BW73 handleUserUnPublished ");
@@ -386,7 +385,7 @@ class AgoraRtcAdapter {
     }
 
     this.agoraClient.on("user-joined", async (user) => {
-	    console.warn("user-joined",user);
+      console.warn("user-joined", user);
     });
     this.agoraClient.on("user-published", async (user, mediaType) => {
 
@@ -399,7 +398,7 @@ class AgoraRtcAdapter {
       const clientMediaStreams = that.mediaStreams[clientId] = that.mediaStreams[clientId] || {};
 
       if (mediaType === 'audio') {
-	      user.audioTrack.play();
+        user.audioTrack.play();
 
         const audioStream = new MediaStream();
         console.log("user.audioTrack ", user.audioTrack._mediaStreamTrack);
@@ -419,25 +418,25 @@ class AgoraRtcAdapter {
       }
 
       if (clientId == 'CCC') {
-	  if (mediaType === 'video') {
-		// document.getElementById("video360").srcObject=videoStream;
-		 //document.querySelector("#video360").setAttribute("src", videoStream);
-		 //document.querySelector("#video360").setAttribute("src", user.videoTrack._mediaStreamTrack);
-		 //document.querySelector("#video360").srcObject= user.videoTrack._mediaStreamTrack;
-		 document.querySelector("#video360").srcObject=videoStream;
-		 document.querySelector("#video360").play();
-	  }
-	  if (mediaType === 'audio') {
-		  user.audioTrack.play();
-	  }
+        if (mediaType === 'video') {
+          // document.getElementById("video360").srcObject=videoStream;
+          //document.querySelector("#video360").setAttribute("src", videoStream);
+          //document.querySelector("#video360").setAttribute("src", user.videoTrack._mediaStreamTrack);
+          //document.querySelector("#video360").srcObject= user.videoTrack._mediaStreamTrack;
+          document.querySelector("#video360").srcObject = videoStream;
+          document.querySelector("#video360").play();
+        }
+        if (mediaType === 'audio') {
+          user.audioTrack.play();
+        }
       }
       if (clientId == 'DDD') {
-	  if (mediaType === 'video') {
-	  	user.videoTrack.play("video360");
-	  }
-	  if (mediaType === 'audio') {
-		  user.audioTrack.play();
-	  }
+        if (mediaType === 'video') {
+          user.videoTrack.play("video360");
+        }
+        if (mediaType === 'audio') {
+          user.audioTrack.play();
+        }
       }
     });
 
@@ -448,73 +447,77 @@ class AgoraRtcAdapter {
     // o
 
 
- if (this.enableAvatar) {
-        var stream = document.getElementById("canvas").captureStream(30);
-        [this.userid, this.localTracks.audioTrack, this.localTracks.videoTrack] = await Promise.all([
+    if (this.enableAvatar) {
+      var stream = document.getElementById("canvas").captureStream(30);
+      [this.userid, this.localTracks.audioTrack, this.localTracks.videoTrack] = await Promise.all([
         this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null),
         AgoraRTC.createMicrophoneAudioTrack(), AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: stream.getVideoTracks()[0] })]);
- }
- else if (this.enableVideoFiltered && this.enableAudio) {
+    }
+    else if (this.enableVideoFiltered && this.enableAudio) {
       var stream = document.getElementById("canvas_secret").captureStream(30);
       [this.userid, this.localTracks.audioTrack, this.localTracks.videoTrack] = await Promise.all([this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null), AgoraRTC.createMicrophoneAudioTrack(), AgoraRTC.createCustomVideoTrack({ mediaStreamTrack: stream.getVideoTracks()[0] })]);
- }
- else if (this.enableVideo && this.enableAudio) {
+    }
+    else if (this.enableVideo && this.enableAudio) {
       [this.userid, this.localTracks.audioTrack, this.localTracks.videoTrack] = await Promise.all([
-      this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null),
-      AgoraRTC.createMicrophoneAudioTrack(), AgoraRTC.createCameraVideoTrack({encoderConfig: '480p_2'})]);
+        this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null),
+        AgoraRTC.createMicrophoneAudioTrack(), AgoraRTC.createCameraVideoTrack({ encoderConfig: '480p_2' })]);
     } else if (this.enableVideo) {
       [this.userid, this.localTracks.videoTrack] = await Promise.all([
-      // Join the channel.
-      this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null), AgoraRTC.createCameraVideoTrack("360p_4")]);
+        // Join the channel.
+        this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null), AgoraRTC.createCameraVideoTrack("360p_4")]);
     } else if (this.enableAudio) {
       [this.userid, this.localTracks.audioTrack] = await Promise.all([
-      // Join the channel.
-      this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null), AgoraRTC.createMicrophoneAudioTrack()]);
+        // Join the channel.
+        this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null), AgoraRTC.createMicrophoneAudioTrack()]);
     } else {
       this.userid = await this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null);
     }
 
-	  
+
     // select facetime camera if exists
     if (this.enableVideo && !this.enableVideoFiltered) {
-	    let cams = await AgoraRTC.getCameras();
-	    for (var i = 0; i < cams.length; i++) {
-	      if (cams[i].label.indexOf("FaceTime") == 0) {
-		console.log("select FaceTime camera",cams[i].deviceId );
-	    	await this.localTracks.videoTrack.setDevice(cams[i].deviceId);
-	      }
-	    }
+      let cams = await AgoraRTC.getCameras();
+      for (var i = 0; i < cams.length; i++) {
+        if (cams[i].label.indexOf("FaceTime") == 0) {
+          console.log("select FaceTime camera", cams[i].deviceId);
+          await this.localTracks.videoTrack.setDevice(cams[i].deviceId);
+        }
+      }
     }
-	  
+
     if (this.enableVideo && this.showLocal) {
       this.localTracks.videoTrack.play("local-player");
     }
 
     // Enable virtual background OLD Method
     if (this.enableVideo && this.vbg0 && this.localTracks.videoTrack) {
-        const imgElement = document.createElement('img');
-        imgElement.onload = async () => {
-          if (!this.virtualBackgroundInstance) {
-            console.log("SEG INIT ", this.localTracks.videoTrack);
-            this.virtualBackgroundInstance = await SegPlugin.inject(this.localTracks.videoTrack, "/assets/wasms0").catch(console.error);
-            console.log("SEG INITED");
-          }
-          this.virtualBackgroundInstance.setOptions({ enable: true, background: imgElement });
-        };
-        imgElement.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAD0lEQVR4XmNg+M+AQDg5AOk9C/VkomzYAAAAAElFTkSuQmCC';
+      const imgElement = document.createElement('img');
+      imgElement.onload = async () => {
+        if (!this.virtualBackgroundInstance) {
+          console.log("SEG INIT ", this.localTracks.videoTrack);
+          this.virtualBackgroundInstance = await SegPlugin.inject(this.localTracks.videoTrack, "/assets/wasms0").catch(console.error);
+          console.log("SEG INITED");
+        }
+        this.virtualBackgroundInstance.setOptions({ enable: true, background: imgElement });
+      };
+      imgElement.src = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAQAAAADCAIAAAA7ljmRAAAAD0lEQVR4XmNg+M+AQDg5AOk9C/VkomzYAAAAAElFTkSuQmCC';
     }
 
     // Enable virtual background New Method
     if (this.enableVideo && this.vbg && this.localTracks.videoTrack) {
 
-	this.extension = new VirtualBackgroundExtension();
-	AgoraRTC.registerExtensions([this.extension]);
-	this.processor = this.extension.createProcessor();
-	await this.processor.init("/assets/wasms");
-	this.localTracks.videoTrack.pipe(this.processor).pipe(this.localTracks.videoTrack.processorDestination);
-	await this.processor.setOptions({ type: 'color', color:"#00ff00"});
-	await this.processor.enable();
+      this.extension = new VirtualBackgroundExtension();
+      AgoraRTC.registerExtensions([this.extension]);
+      this.processor = this.extension.createProcessor();
+      await this.processor.init("/assets/wasms");
+      this.localTracks.videoTrack.pipe(this.processor).pipe(this.localTracks.videoTrack.processorDestination);
+      await this.processor.setOptions({ type: 'color', color: "#00ff00" });
+      await this.processor.enable();
     }
+
+    window.localTracks = this.localTracks;
+
+    console.error("ASS 2 ", window.localTracks);
 
     // Publish the local video and audio tracks to the channel.
     if (this.enableVideo || this.enableAudio || this.enableAvatar) {
