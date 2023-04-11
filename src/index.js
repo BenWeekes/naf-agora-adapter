@@ -1,6 +1,7 @@
 class AgoraRtcAdapter {
 
   constructor(easyrtc) {
+    
     console.log("BW73 constructor ", easyrtc);
 
     this.easyrtc = easyrtc || window.easyrtc;
@@ -8,7 +9,10 @@ class AgoraRtcAdapter {
     this.room = "default";
     this.userid = 0;
     this.appid = null;
-
+    this.mocapData="";
+    this.mocapPrevData="";
+    this.logi=0;
+    this.logo=0;
     this.mediaStreams = {};
     this.remoteClients = {};
     this.pendingMediaRequests = new Map();
@@ -20,7 +24,6 @@ class AgoraRtcAdapter {
 
     this.localTracks = { videoTrack: null, audioTrack: null };
     window.localTracks = this.localTracks;
-    console.error("ASS ", window.localTracks);
     this.token = null;
     this.clientId = null;
     this.uid = null;
@@ -33,7 +36,6 @@ class AgoraRtcAdapter {
     this.pipeProcessor = (track, processor) => {
       track.pipe(processor).pipe(track.processorDestination);
     }
-
 
     this.serverTimeRequests = 0;
     this.timeOffsets = [];
@@ -48,6 +50,61 @@ class AgoraRtcAdapter {
     this.easyrtc.setPeerClosedListener(clientId => {
       delete this.remoteClients[clientId];
     });
+
+    this.isChrome = (navigator.userAgent.indexOf('Firefox') === -1 && navigator.userAgent.indexOf('Chrome') > -1);
+
+    if (this.isChrome) {
+      window.oldRTCPeerConnection = RTCPeerConnection;
+      window.RTCPeerConnection = new Proxy(window.RTCPeerConnection, {
+        construct: function (target, args) {
+          if (args.length > 0) {
+            args[0]["encodedInsertableStreams"] = true;
+          } else {
+            args.push({ encodedInsertableStreams: true });
+          }
+      
+          const pc = new window.oldRTCPeerConnection(...args);
+          return pc;
+        },
+      });
+      const oldSetConfiguration = window.RTCPeerConnection.prototype.setConfiguration;
+      window.RTCPeerConnection.prototype.setConfiguration = function () {
+        const args = arguments;
+        if (args.length > 0) {
+          args[0]["encodedInsertableStreams"] = true;
+        } else {
+          args.push({ encodedInsertableStreams: true });
+        }
+      
+        oldSetConfiguration.apply(this, args);
+      };
+    }
+    
+    // custom data append params
+    this.CustomDataDetector = 'AGORAMOCAP';
+    this.CustomDatLengthByteCount = 4;
+    this.senderChannel = new MessageChannel;
+    this.receiverChannel;
+    this.r_receiver=null;
+    this.r_clientId=null;
+
+    this._vad_audioTrack = null;
+    this._voiceActivityDetectionFrequency = 150;
+  
+    this._vad_MaxAudioSamples = 400;
+    this._vad_MaxBackgroundNoiseLevel = 30;
+    this._vad_SilenceOffeset = 10;
+    this._vad_audioSamplesArr = [];
+    this._vad_audioSamplesArrSorted = [];
+    this._vad_exceedCount = 0;
+    this._vad_exceedCountThreshold = 2;
+    this._vad_exceedCountThresholdLow = 1;
+    this._voiceActivityDetectionInterval;
+
+
+    
+    window.AgoraRtcAdapter=this;
+    
   }
 
   setServerUrl(url) {
@@ -191,18 +248,165 @@ class AgoraRtcAdapter {
     this.easyrtc.hangup(clientId);
   }
 
+  sendMocap(mocap) {
+    if (mocap==this.mocapPrevData){
+   //   console.log("blank");
+      mocap="";
+    }
+
+    // set to blank after sending
+    if (this.mocapData==="") {
+      this.mocapData=mocap;
+    }
+
+    if (!this.isChrome) {
+      this.senderChannel.port1.postMessage({ watermark: mocap });
+    }
+  }
+
+  async createEncoder(sender) {
+    if (this.isChrome) {
+      const streams = sender.createEncodedStreams();
+      const textEncoder = new TextEncoder();
+      var that=this;
+      const transformer = new TransformStream({
+        transform(chunk, controller) {
+          const mocap = textEncoder.encode(that.mocapData);
+          that.mocapPrevData=that.mocapData;
+          that.mocapData="";
+          const frame = chunk.data;
+          const data = new Uint8Array(chunk.data.byteLength + mocap.byteLength + that.CustomDatLengthByteCount + that.CustomDataDetector.length);
+          data.set(new Uint8Array(frame), 0);
+          data.set(mocap, frame.byteLength);
+          var bytes = that.getIntBytes(mocap.byteLength);
+          for (let i = 0; i < that.CustomDatLengthByteCount; i++) {
+            data[frame.byteLength + mocap.byteLength + i] = bytes[i];
+          }
+  
+          // Set magic string at the end
+          const magicIndex = frame.byteLength + mocap.byteLength + that.CustomDatLengthByteCount;
+          for (let i = 0; i < that.CustomDataDetector.length; i++) {
+            data[magicIndex + i] = that.CustomDataDetector.charCodeAt(i);
+          }
+          chunk.data = data.buffer;
+          controller.enqueue(chunk);
+        }
+      });
+  
+      streams.readable.pipeThrough(transformer).pipeTo(streams.writable);
+    } else {
+      var that=this;
+      const worker = new Worker('/dist/script-transform-worker.js');
+      await new Promise(resolve => worker.onmessage = (event) => {
+        if (event.data === 'registered') {
+          resolve();
+        }
+      });
+      const senderTransform = new RTCRtpScriptTransform(worker, { name: 'outgoing', port: that.senderChannel.port2 }, [that.senderChannel.port2]);
+      senderTransform.port = that.senderChannel.port1;
+      sender.transform = senderTransform;
+      await new Promise(resolve => worker.onmessage = (event) => {
+        if (event.data === 'started') {
+          resolve();
+        }
+      });
+
+      senderTransform.port.onmessage = e => {
+        if (e.data=="CLEAR") {
+          that.mocapPrevData=that.mocapData;
+          that.mocapData="";
+        }       
+      }; 
+   
+
+          
+      that.senderChannel.port1.postMessage({ watermark: that.mocapData });
+    }
+  }
+
+  async recreateDecoder(){
+    this.createDecoder(this.r_receiver,this.r_clientId);
+  }
+
+  async createDecoder(receiver,clientId) {
+    if (this.isChrome) {
+      const streams = receiver.createEncodedStreams();
+      const textDecoder = new TextDecoder();
+      var that=this;
+
+      const transformer = new TransformStream({
+        transform(chunk, controller) {
+          const view = new DataView(chunk.data);  
+          const magicData = new Uint8Array(chunk.data, chunk.data.byteLength - that.CustomDataDetector.length, that.CustomDataDetector.length);
+          let magic = [];
+          for (let i = 0; i < that.CustomDataDetector.length; i++) {
+            magic.push(magicData[i]);
+
+          }
+          let magicString = String.fromCharCode(...magic);
+          if (magicString === that.CustomDataDetector) {
+            const mocapLen = view.getUint32(chunk.data.byteLength - (that.CustomDatLengthByteCount + that.CustomDataDetector.length), false);
+            const frameSize = chunk.data.byteLength - (mocapLen + that.CustomDatLengthByteCount +  that.CustomDataDetector.length);
+            const mocapBuffer = new Uint8Array(chunk.data, frameSize, mocapLen);
+            const mocap = textDecoder.decode(mocapBuffer)        
+            if (mocap.length>0) {
+              window.remoteMocap(mocap+","+clientId);
+            }
+            const frame = chunk.data;
+            chunk.data = new ArrayBuffer(frameSize);
+            const data = new Uint8Array(chunk.data);
+            data.set(new Uint8Array(frame, 0, frameSize));
+          }
+          controller.enqueue(chunk);
+        }
+      });
+      streams.readable.pipeThrough(transformer).pipeTo(streams.writable);
+    } else {
+      this.receiverChannel = new MessageChannel;
+      var that=this;
+      const worker = new Worker('/dist/script-transform-worker.js');
+      await new Promise(resolve => worker.onmessage = (event) => {
+        if (event.data === 'registered') {
+          
+          resolve();
+        }
+      });
+  
+      const receiverTransform = new RTCRtpScriptTransform(worker, { name: 'incoming', port: that.receiverChannel.port2 }, [that.receiverChannel.port2]);
+
+      receiverTransform.port = that.receiverChannel.port1;
+      receiver.transform = receiverTransform;
+      receiverTransform.port.onmessage = e => {
+        if (e.data.length>0) {
+          window.remoteMocap(e.data+","+clientId);
+        }
+      };
+  
+      await new Promise(resolve => worker.onmessage = (event) => {
+        if (event.data === 'started') {
+        //  console.warn("incoming 5a",clientId,event.data );
+          resolve();
+        }
+     //   console.warn("incoming 5",clientId,event.data );
+
+      });
+    //  console.warn("incoming 6",clientId );
+    }
+  }  
   sendData(clientId, dataType, data) {
-    console.log("BW73 sendData ", clientId, dataType, data);
+  //  console.log("BW73 sendData ", clientId, dataType, data);
     // send via webrtc otherwise fallback to websockets
     this.easyrtc.sendData(clientId, dataType, data);
   }
 
   sendDataGuaranteed(clientId, dataType, data) {
-    console.log("BW73 sendDataGuaranteed ", clientId, dataType, data);
+  //  console.log("BW73 sendDataGuaranteed ", clientId, dataType, data);
     this.easyrtc.sendDataWS(clientId, dataType, data);
   }
 
   broadcastData(dataType, data) {
+    return this.broadcastDataGuaranteed(dataType, data);
+    /*
     console.log("BW73 broadcastData ", dataType, data);
     var roomOccupants = this.easyrtc.getRoomOccupantsAsMap(this.room);
 
@@ -211,19 +415,24 @@ class AgoraRtcAdapter {
     for (var roomOccupant in roomOccupants) {
       if (roomOccupants[roomOccupant] && roomOccupant !== this.easyrtc.myEasyrtcid) {
         // send via webrtc otherwise fallback to websockets
-        this.easyrtc.sendData(roomOccupant, dataType, data);
+        try {
+          this.easyrtc.sendData(roomOccupant, dataType, data);
+        } catch (e) {
+           console.error("sendData",e);
+        }
       }
     }
+    */
   }
 
   broadcastDataGuaranteed(dataType, data) {
-    console.log("BW73 broadcastDataGuaranteed ", dataType, data);
+   // console.log("BW73 broadcastDataGuaranteed ", dataType, data);
     var destination = { targetRoom: this.room };
     this.easyrtc.sendDataWS(destination, dataType, data);
   }
 
   getConnectStatus(clientId) {
-    console.log("BW73 getConnectStatus ", clientId);
+  //  console.log("BW73 getConnectStatus ", clientId);
     var status = this.easyrtc.getConnectStatus(clientId);
 
     if (status == this.easyrtc.IS_CONNECTED) {
@@ -327,6 +536,16 @@ class AgoraRtcAdapter {
     }
   }
 
+  getIntBytes(x) {
+    var bytes = [];
+    var i = this.CustomDatLengthByteCount;
+    do {
+      bytes[--i] = x & (255);
+      x = x >> 8;
+    } while (i)
+    return bytes;
+  }
+
   addLocalMediaStream(stream, streamName) {
     console.log("BW73 addLocalMediaStream ", stream, streamName);
     const easyrtc = this.easyrtc;
@@ -367,6 +586,61 @@ class AgoraRtcAdapter {
 
   handleUserUnpublished(user, mediaType) {
     console.log("BW73 handleUserUnPublished ");
+  }
+
+   getInputLevel(track) {
+    var analyser = track._source.volumeLevelAnalyser.analyserNode;
+    //var analyser = track._source.analyserNode;
+    const bufferLength = analyser.frequencyBinCount;
+    var data = new Uint8Array(bufferLength);
+    analyser.getByteFrequencyData(data);
+    var values = 0;
+    var average;
+    var length = data.length;
+    for (var i = 0; i < length; i++) {
+      values += data[i];
+    }
+    average = Math.floor(values / length);
+    return average;
+  }
+
+   voiceActivityDetection() {
+    if (!this._vad_audioTrack || !this._vad_audioTrack._enabled)
+      return;
+
+    var audioLevel = this.getInputLevel(this._vad_audioTrack);
+    if (audioLevel <= this._vad_MaxBackgroundNoiseLevel) {
+      if (this._vad_audioSamplesArr.length >= this._vad_MaxAudioSamples) {
+        var removed = this._vad_audioSamplesArr.shift();
+        var removedIndex = this._vad_audioSamplesArrSorted.indexOf(removed);
+        if (removedIndex > -1) {
+          this._vad_audioSamplesArrSorted.splice(removedIndex, 1);
+        }
+      }
+      this._vad_audioSamplesArr.push(audioLevel);
+      this._vad_audioSamplesArrSorted.push(audioLevel);
+      this._vad_audioSamplesArrSorted.sort((a, b) => a - b);
+    }
+    var background = Math.floor(3 * this._vad_audioSamplesArrSorted[Math.floor(this._vad_audioSamplesArrSorted.length / 2)] / 2);
+    if (audioLevel > background + this._vad_SilenceOffeset) {
+      this._vad_exceedCount++;
+    } else {
+      this._vad_exceedCount = 0;
+    }
+
+    if (this._vad_exceedCount > this._vad_exceedCountThresholdLow) {
+      //AgoraRTCUtilEvents.emit("VoiceActivityDetectedFast", this._vad_exceedCount);
+      window._state_stop_at=Date.now();
+     // console.error("VADl ",Date.now()-window._state_stop_at);
+    }
+
+    if (this._vad_exceedCount > this._vad_exceedCountThreshold) {
+      //AgoraRTCUtilEvents.emit("VoiceActivityDetected", this._vad_exceedCount);
+      this._vad_exceedCount = 0;
+      window._state_stop_at=Date.now();
+   //   console.error("VAD ",Date.now()-window._state_stop_at);
+    }
+
   }
 
   async connectAgora() {
@@ -437,6 +711,27 @@ class AgoraRtcAdapter {
           user.audioTrack.play();
         }
       }
+
+
+      let enc_id='na';
+      if (mediaType === 'audio') {
+        enc_id=user.audioTrack._mediaStreamTrack.id;       
+      } else {
+       // enc_id=user.videoTrack._mediaStreamTrack.id;
+      }
+    
+      //console.warn(mediaType,enc_id);    
+      const pc =this.agoraClient._p2pChannel.connection.peerConnection;
+      const receivers = pc.getReceivers();  
+      for (let i = 0; i < receivers.length; i++) {
+        if (receivers[i].track && receivers[i].track.id===enc_id ) {
+          console.warn("Match",mediaType,enc_id);
+          this.r_receiver=receivers[i];
+          this.r_clientId=clientId;
+          this.createDecoder(this.r_receiver,this.r_clientId);
+      }
+    }
+    
     });
 
     this.agoraClient.on("user-unpublished", that.handleUserUnpublished);
@@ -465,9 +760,27 @@ class AgoraRtcAdapter {
         // Join the channel.
         this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null), AgoraRTC.createCameraVideoTrack("360p_4")]);
     } else if (this.enableAudio) {
+      let audio_track;
+      if (window.gum_stream) { // avoid double allow iOs
+        
+        audio_track=AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: window.gum_stream.getAudioTracks()[0]});
+        console.warn(audio_track,"audio_track");
+      }
+      else {
+        audio_track=AgoraRTC.createMicrophoneAudioTrack()
+      }
+      
       [this.userid, this.localTracks.audioTrack] = await Promise.all([
         // Join the channel.
-        this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null), AgoraRTC.createMicrophoneAudioTrack()]);
+        this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null), audio_track]);
+        //console.log("createMicrophoneAudioTrack");
+        this._vad_audioTrack = this.localTracks.audioTrack;
+        if (!this._voiceActivityDetectionInterval) {
+          this._voiceActivityDetectionInterval = setInterval(() => {
+            this.voiceActivityDetection();
+          }, this._voiceActivityDetectionFrequency);
+        }
+        
     } else {
       this.userid = await this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null);
     }
@@ -516,13 +829,25 @@ class AgoraRtcAdapter {
 
     window.localTracks = this.localTracks;
 
-    console.error("ASS 2 ", window.localTracks);
-
     // Publish the local video and audio tracks to the channel.
     if (this.enableVideo || this.enableAudio || this.enableAvatar) {
-      await this.agoraClient.publish(Object.values(this.localTracks));
+      if (this.localTracks.audioTrack)
+        await this.agoraClient.publish(this.localTracks.audioTrack);
+      if (this.localTracks.videoTrack)
+        await this.agoraClient.publish(this.localTracks.videoTrack);
+
       console.log("publish success");
+      const pc =this.agoraClient._p2pChannel.connection.peerConnection;
+      const senders = pc.getSenders();
+      let i = 0;
+      for (i = 0; i < senders.length; i++) {
+        if (senders[i].track && (senders[i].track.kind == 'audio')){//} || senders[i].track.kind == 'video' )) {
+          this.createEncoder(senders[i]);
+        }
+      }      
     }
+
+    // RTM
 
   }
 
@@ -532,31 +857,7 @@ class AgoraRtcAdapter {
 
   async _connect(connectSuccess, connectFailure) {
     var that = this;
-
     await that.easyrtc.connect(that.app, connectSuccess, connectFailure);
-
-    /*
-       this.easyrtc.setStreamAcceptor(this.setMediaStream.bind(this));
-       this.easyrtc.setOnStreamClosed(function(clientId, stream, streamName) {
-        delete this.mediaStreams[clientId][streamName];
-      });
-       if (that.easyrtc.audioEnabled || that.easyrtc.videoEnabled) {
-        navigator.mediaDevices.getUserMedia({
-          video: that.easyrtc.videoEnabled,
-          audio: that.easyrtc.audioEnabled
-        }).then(
-          function(stream) {
-            that.addLocalMediaStream(stream, "default");
-            that.easyrtc.connect(that.app, connectSuccess, connectFailure);
-          },
-          function(errorCode, errmesg) {
-            NAF.log.error(errorCode, errmesg);
-          }
-        );
-      } else {
-        that.easyrtc.connect(that.app, connectSuccess, connectFailure);
-      }
-      */
   }
 
   _getRoomJoinTime(clientId) {
