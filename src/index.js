@@ -1,7 +1,7 @@
 class AgoraRtcAdapter {
 
   constructor(easyrtc) {
-    
+
     console.log("BW73 constructor ", easyrtc);
 
     this.easyrtc = easyrtc || window.easyrtc;
@@ -9,14 +9,14 @@ class AgoraRtcAdapter {
     this.room = "default";
     this.userid = 0;
     this.appid = null;
-    this.mocapData="";
-    this.mocapPrevData="";
-    this.logi=0;
-    this.logo=0;
+    this.mocapData = "";
+    this.mocapPrevData = "";
+    this.logi = 0;
+    this.logo = 0;
     this.mediaStreams = {};
     this.remoteClients = {};
+    this.audioJitter = {};
     this.pendingMediaRequests = new Map();
-
     this.enableVideo = false;
     this.enableVideoFiltered = false;
     this.enableAudio = false;
@@ -62,7 +62,7 @@ class AgoraRtcAdapter {
           } else {
             args.push({ encodedInsertableStreams: true });
           }
-      
+
           const pc = new window.oldRTCPeerConnection(...args);
           return pc;
         },
@@ -75,36 +75,33 @@ class AgoraRtcAdapter {
         } else {
           args.push({ encodedInsertableStreams: true });
         }
-      
+
         oldSetConfiguration.apply(this, args);
       };
     }
-    
+
     // custom data append params
     this.CustomDataDetector = 'AGORAMOCAP';
     this.CustomDatLengthByteCount = 4;
     this.senderChannel = new MessageChannel;
     this.receiverChannel;
-    this.r_receiver=null;
-    this.r_clientId=null;
+    //this.r_receiver=null;
+    //this.r_clientId=null;
 
     this._vad_audioTrack = null;
     this._voiceActivityDetectionFrequency = 150;
-  
+
     this._vad_MaxAudioSamples = 400;
-    this._vad_MaxBackgroundNoiseLevel = 30;
-    this._vad_SilenceOffeset = 10;
+    this._vad_MaxBackgroundNoiseLevel = 20;
+    this._vad_SilenceOffeset = 4;
     this._vad_audioSamplesArr = [];
     this._vad_audioSamplesArrSorted = [];
     this._vad_exceedCount = 0;
     this._vad_exceedCountThreshold = 2;
     this._vad_exceedCountThresholdLow = 1;
     this._voiceActivityDetectionInterval;
+    window.AgoraRtcAdapter = this;
 
-
-    
-    window.AgoraRtcAdapter=this;
-    
   }
 
   setServerUrl(url) {
@@ -123,24 +120,24 @@ class AgoraRtcAdapter {
     const obj = JSON.parse(json);
     this.room = obj.name;
 
-    if (obj.vbg && obj.vbg=='true' ) {      
+    if (obj.vbg && obj.vbg == 'true') {
       this.vbg = true;
     }
 
-    if (obj.vbg0 && obj.vbg0=='true' ) {
+    if (obj.vbg0 && obj.vbg0 == 'true') {
       this.vbg0 = true;
       AgoraRTC.loadModule(SegPlugin, {});
     }
 
-    if (obj.enableAvatar && obj.enableAvatar=='true' ) {
+    if (obj.enableAvatar && obj.enableAvatar == 'true') {
       this.enableAvatar = true;
     }
 
-    if (obj.showLocal  && obj.showLocal=='true') {
+    if (obj.showLocal && obj.showLocal == 'true') {
       this.showLocal = true;
     }
 
-    if (obj.enableVideoFiltered && obj.enableVideoFiltered=='true' ) {
+    if (obj.enableVideoFiltered && obj.enableVideoFiltered == 'true') {
       this.enableVideoFiltered = true;
     }
     this.easyrtc.joinRoom(this.room, null);
@@ -249,14 +246,14 @@ class AgoraRtcAdapter {
   }
 
   sendMocap(mocap) {
-    if (mocap==this.mocapPrevData){
-   //   console.log("blank");
-      mocap="";
+    if (mocap == this.mocapPrevData) {
+      //   console.log("blank");
+      mocap = "";
     }
 
     // set to blank after sending
-    if (this.mocapData==="") {
-      this.mocapData=mocap;
+    if (this.mocapData === "") {
+      this.mocapData = mocap;
     }
 
     if (!this.isChrome) {
@@ -268,12 +265,13 @@ class AgoraRtcAdapter {
     if (this.isChrome) {
       const streams = sender.createEncodedStreams();
       const textEncoder = new TextEncoder();
-      var that=this;
+      var that = this;
       const transformer = new TransformStream({
         transform(chunk, controller) {
           const mocap = textEncoder.encode(that.mocapData);
-          that.mocapPrevData=that.mocapData;
-          that.mocapData="";
+      //    console.error("appending ",that.mocapData);
+          that.mocapPrevData = that.mocapData;
+          that.mocapData = "";
           const frame = chunk.data;
           const data = new Uint8Array(chunk.data.byteLength + mocap.byteLength + that.CustomDatLengthByteCount + that.CustomDataDetector.length);
           data.set(new Uint8Array(frame), 0);
@@ -282,20 +280,27 @@ class AgoraRtcAdapter {
           for (let i = 0; i < that.CustomDatLengthByteCount; i++) {
             data[frame.byteLength + mocap.byteLength + i] = bytes[i];
           }
-  
+
           // Set magic string at the end
           const magicIndex = frame.byteLength + mocap.byteLength + that.CustomDatLengthByteCount;
           for (let i = 0; i < that.CustomDataDetector.length; i++) {
             data[magicIndex + i] = that.CustomDataDetector.charCodeAt(i);
           }
           chunk.data = data.buffer;
-          controller.enqueue(chunk);
+//          try {
+//            console.error("sending ", mocap.byteLength," to ", chunk.data.byteLength);
+            controller.enqueue(chunk);
+       //    console.error("sent ", mocap.byteLength," to ", chunk.data.byteLength);
+
+//          } catch (e) {
+//            console.error(e);
+//          }
         }
       });
-  
+
       streams.readable.pipeThrough(transformer).pipeTo(streams.writable);
     } else {
-      var that=this;
+      var that = this;
       const worker = new Worker('/dist/script-transform-worker.js');
       await new Promise(resolve => worker.onmessage = (event) => {
         if (event.data === 'registered') {
@@ -312,31 +317,29 @@ class AgoraRtcAdapter {
       });
 
       senderTransform.port.onmessage = e => {
-        if (e.data=="CLEAR") {
-          that.mocapPrevData=that.mocapData;
-          that.mocapData="";
-        }       
-      }; 
-   
-
-          
+        if (e.data == "CLEAR") {
+          that.mocapPrevData = that.mocapData;
+          that.mocapData = "";
+        }
+      };
       that.senderChannel.port1.postMessage({ watermark: that.mocapData });
     }
   }
 
+  /*
   async recreateDecoder(){
     this.createDecoder(this.r_receiver,this.r_clientId);
-  }
+  }*/
 
-  async createDecoder(receiver,clientId) {
+  async createDecoder(receiver, clientId) {
     if (this.isChrome) {
       const streams = receiver.createEncodedStreams();
       const textDecoder = new TextDecoder();
-      var that=this;
+      var that = this;
 
       const transformer = new TransformStream({
         transform(chunk, controller) {
-          const view = new DataView(chunk.data);  
+          const view = new DataView(chunk.data);
           const magicData = new Uint8Array(chunk.data, chunk.data.byteLength - that.CustomDataDetector.length, that.CustomDataDetector.length);
           let magic = [];
           for (let i = 0; i < that.CustomDataDetector.length; i++) {
@@ -346,11 +349,11 @@ class AgoraRtcAdapter {
           let magicString = String.fromCharCode(...magic);
           if (magicString === that.CustomDataDetector) {
             const mocapLen = view.getUint32(chunk.data.byteLength - (that.CustomDatLengthByteCount + that.CustomDataDetector.length), false);
-            const frameSize = chunk.data.byteLength - (mocapLen + that.CustomDatLengthByteCount +  that.CustomDataDetector.length);
+            const frameSize = chunk.data.byteLength - (mocapLen + that.CustomDatLengthByteCount + that.CustomDataDetector.length);
             const mocapBuffer = new Uint8Array(chunk.data, frameSize, mocapLen);
-            const mocap = textDecoder.decode(mocapBuffer)        
-            if (mocap.length>0) {
-              window.remoteMocap(mocap+","+clientId);
+            const mocap = textDecoder.decode(mocapBuffer)
+            if (mocap.length > 0) {
+              window.remoteMocap(mocap + "," + clientId);
             }
             const frame = chunk.data;
             chunk.data = new ArrayBuffer(frameSize);
@@ -363,44 +366,69 @@ class AgoraRtcAdapter {
       streams.readable.pipeThrough(transformer).pipeTo(streams.writable);
     } else {
       this.receiverChannel = new MessageChannel;
-      var that=this;
+      var that = this;
       const worker = new Worker('/dist/script-transform-worker.js');
       await new Promise(resolve => worker.onmessage = (event) => {
         if (event.data === 'registered') {
-          
+
           resolve();
         }
       });
-  
+
       const receiverTransform = new RTCRtpScriptTransform(worker, { name: 'incoming', port: that.receiverChannel.port2 }, [that.receiverChannel.port2]);
 
       receiverTransform.port = that.receiverChannel.port1;
       receiver.transform = receiverTransform;
       receiverTransform.port.onmessage = e => {
-        if (e.data.length>0) {
-          window.remoteMocap(e.data+","+clientId);
+        if (e.data.length > 0) {
+          window.remoteMocap(e.data + "," + clientId);
         }
       };
-  
+
       await new Promise(resolve => worker.onmessage = (event) => {
         if (event.data === 'started') {
-        //  console.warn("incoming 5a",clientId,event.data );
+          //  console.warn("incoming 5a",clientId,event.data );
           resolve();
         }
-     //   console.warn("incoming 5",clientId,event.data );
+        //   console.warn("incoming 5",clientId,event.data );
 
       });
-    //  console.warn("incoming 6",clientId );
+      //  console.warn("incoming 6",clientId );
     }
-  }  
+  }
+
+  async readStats() {
+
+
+    if (!this.agoraClient._users){
+      return;
+    }
+    for (var u = 0; u < this.agoraClient._users.length; u++) {
+      if (this.agoraClient._users[u].audioTrack && this.agoraClient._users[u].audioTrack._mediaStreamTrack) {
+      await this.agoraClient._p2pChannel.connection.peerConnection.getStats(this.agoraClient._users[u].audioTrack._mediaStreamTrack).then(async stats => {
+        await stats.forEach(report => {
+          if (report.type === "inbound-rtp" && report.kind === "audio") {                        
+            var jitterBufferDelay = (report["jitterBufferDelay"]/report["jitterBufferEmittedCount"]).toFixed(3);
+            if (!isNaN(jitterBufferDelay)) {
+              this.audioJitter[this.agoraClient._users[u].uid]=jitterBufferDelay*1000;
+            } else {
+              this.audioJitter[this.agoraClient._users[u].uid]=80; // default ms
+            }
+          }
+        })
+      });
+      }
+    }
+  }
+
   sendData(clientId, dataType, data) {
-  //  console.log("BW73 sendData ", clientId, dataType, data);
+    //  console.log("BW73 sendData ", clientId, dataType, data);
     // send via webrtc otherwise fallback to websockets
     this.easyrtc.sendData(clientId, dataType, data);
   }
 
   sendDataGuaranteed(clientId, dataType, data) {
-  //  console.log("BW73 sendDataGuaranteed ", clientId, dataType, data);
+    //  console.log("BW73 sendDataGuaranteed ", clientId, dataType, data);
     this.easyrtc.sendDataWS(clientId, dataType, data);
   }
 
@@ -426,13 +454,13 @@ class AgoraRtcAdapter {
   }
 
   broadcastDataGuaranteed(dataType, data) {
-   // console.log("BW73 broadcastDataGuaranteed ", dataType, data);
+    // console.log("BW73 broadcastDataGuaranteed ", dataType, data);
     var destination = { targetRoom: this.room };
     this.easyrtc.sendDataWS(destination, dataType, data);
   }
 
   getConnectStatus(clientId) {
-  //  console.log("BW73 getConnectStatus ", clientId);
+    //  console.log("BW73 getConnectStatus ", clientId);
     var status = this.easyrtc.getConnectStatus(clientId);
 
     if (status == this.easyrtc.IS_CONNECTED) {
@@ -588,7 +616,7 @@ class AgoraRtcAdapter {
     console.log("BW73 handleUserUnPublished ");
   }
 
-   getInputLevel(track) {
+  getInputLevel(track) {
     var analyser = track._source.volumeLevelAnalyser.analyserNode;
     //var analyser = track._source.analyserNode;
     const bufferLength = analyser.frequencyBinCount;
@@ -604,7 +632,7 @@ class AgoraRtcAdapter {
     return average;
   }
 
-   voiceActivityDetection() {
+  voiceActivityDetection() {
     if (!this._vad_audioTrack || !this._vad_audioTrack._enabled)
       return;
 
@@ -628,17 +656,21 @@ class AgoraRtcAdapter {
       this._vad_exceedCount = 0;
     }
 
+   
     if (this._vad_exceedCount > this._vad_exceedCountThresholdLow) {
       //AgoraRTCUtilEvents.emit("VoiceActivityDetectedFast", this._vad_exceedCount);
-      window._state_stop_at=Date.now();
-     // console.error("VADl ",Date.now()-window._state_stop_at);
+      window._state_stop_at = Date.now();
+      //console.log("BOOM", audioLevel, background, this._vad_SilenceOffeset,this._vad_exceedCount,this._vad_exceedCountThresholdLow);
+//    } else {
+//      console.log(audioLevel, background, this._vad_SilenceOffeset,this._vad_exceedCount,this._vad_exceedCountThresholdLow);
+
     }
 
     if (this._vad_exceedCount > this._vad_exceedCountThreshold) {
       //AgoraRTCUtilEvents.emit("VoiceActivityDetected", this._vad_exceedCount);
       this._vad_exceedCount = 0;
-      window._state_stop_at=Date.now();
-   //   console.error("VAD ",Date.now()-window._state_stop_at);
+      window._state_stop_at = Date.now();
+      //   console.error("VAD ",Date.now()-window._state_stop_at);
     }
 
   }
@@ -648,6 +680,13 @@ class AgoraRtcAdapter {
     var that = this;
 
     this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "vp8" });
+    AgoraRTC.setParameter('SYNC_GROUP', false);
+//    AgoraRTC.setParameter('SUBSCRIBE_TWCC', true);
+    setInterval(() => {
+      this.readStats();
+    }, 1000);
+    
+
     if (this.enableVideoFiltered || this.enableVideo || this.enableAudio) {
       //this.agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
       //this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "h264" });
@@ -713,25 +752,24 @@ class AgoraRtcAdapter {
       }
 
 
-      let enc_id='na';
+      let enc_id = 'na';
       if (mediaType === 'audio') {
-        enc_id=user.audioTrack._mediaStreamTrack.id;       
+        enc_id = user.audioTrack._mediaStreamTrack.id;
       } else {
-       // enc_id=user.videoTrack._mediaStreamTrack.id;
+        // enc_id=user.videoTrack._mediaStreamTrack.id;
       }
-    
-      //console.warn(mediaType,enc_id);    
-      const pc =this.agoraClient._p2pChannel.connection.peerConnection;
-      const receivers = pc.getReceivers();  
+
+      const pc = this.agoraClient._p2pChannel.connection.peerConnection;
+      const receivers = pc.getReceivers();
       for (let i = 0; i < receivers.length; i++) {
-        if (receivers[i].track && receivers[i].track.id===enc_id ) {
-          console.warn("Match",mediaType,enc_id);
-          this.r_receiver=receivers[i];
-          this.r_clientId=clientId;
-          this.createDecoder(this.r_receiver,this.r_clientId);
+        if (receivers[i].track && receivers[i].track.id === enc_id) {
+          console.warn("Match", mediaType, enc_id);
+          //          this.r_receiver=receivers[i];
+          //this.r_clientId=clientId;
+          this.createDecoder(receivers[i], clientId);
+        }
       }
-    }
-    
+
     });
 
     this.agoraClient.on("user-unpublished", that.handleUserUnpublished);
@@ -739,7 +777,6 @@ class AgoraRtcAdapter {
     console.log("connect agora ");
     // Join a channel and create local tracks. Best practice is to use Promise.all and run them concurrently.
     // o
-
 
     if (this.enableAvatar) {
       var stream = document.getElementById("canvas").captureStream(30);
@@ -762,25 +799,25 @@ class AgoraRtcAdapter {
     } else if (this.enableAudio) {
       let audio_track;
       if (window.gum_stream) { // avoid double allow iOs
-        
-        audio_track=AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: window.gum_stream.getAudioTracks()[0]});
-        console.warn(audio_track,"audio_track");
+
+        audio_track = AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: window.gum_stream.getAudioTracks()[0] });
+        console.warn(audio_track, "audio_track");
       }
       else {
-        audio_track=AgoraRTC.createMicrophoneAudioTrack()
+        audio_track = AgoraRTC.createMicrophoneAudioTrack()
       }
-      
+
       [this.userid, this.localTracks.audioTrack] = await Promise.all([
         // Join the channel.
         this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null), audio_track]);
-        //console.log("createMicrophoneAudioTrack");
-        this._vad_audioTrack = this.localTracks.audioTrack;
-        if (!this._voiceActivityDetectionInterval) {
-          this._voiceActivityDetectionInterval = setInterval(() => {
-            this.voiceActivityDetection();
-          }, this._voiceActivityDetectionFrequency);
-        }
-        
+      //console.log("createMicrophoneAudioTrack");
+      this._vad_audioTrack = this.localTracks.audioTrack;
+      if (!this._voiceActivityDetectionInterval) {
+        this._voiceActivityDetectionInterval = setInterval(() => {
+          this.voiceActivityDetection();
+        }, this._voiceActivityDetectionFrequency);
+      }
+
     } else {
       this.userid = await this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null);
     }
@@ -837,14 +874,14 @@ class AgoraRtcAdapter {
         await this.agoraClient.publish(this.localTracks.videoTrack);
 
       console.log("publish success");
-      const pc =this.agoraClient._p2pChannel.connection.peerConnection;
+      const pc = this.agoraClient._p2pChannel.connection.peerConnection;
       const senders = pc.getSenders();
       let i = 0;
       for (i = 0; i < senders.length; i++) {
-        if (senders[i].track && (senders[i].track.kind == 'audio')){//} || senders[i].track.kind == 'video' )) {
+        if (senders[i].track && (senders[i].track.kind == 'audio')) {
           this.createEncoder(senders[i]);
         }
-      }      
+      }
     }
 
     // RTM
