@@ -503,7 +503,7 @@ class AgoraRtcAdapter {
           console.log(error);
         }
       } else {
-        console.error("uable to send message RTM2 ",dataType,data);
+        //console.error("unable to send message RTM2 ",dataType,data);
       }
     } else {
       if (this.rtmChannel != null) {   
@@ -513,7 +513,7 @@ class AgoraRtcAdapter {
           console.error('AgoraRTM send failure for rtmChannel', error);
         });
       } else {
-        console.error("uable to send message RTM1 ",dataType,data);
+        //console.error("unable to send message RTM1 ",dataType,data);
       }
     }
   }
@@ -530,7 +530,7 @@ class AgoraRtcAdapter {
   }
 
   getConnectStatus(clientId) {
-    console.error("BW73 getConnectStatus ", clientId);
+    //console.error("BW73 getConnectStatus ", clientId);
     var status = this.easyrtc.getConnectStatus(clientId);
 
     if (status == this.easyrtc.IS_CONNECTED) {
@@ -780,7 +780,7 @@ class AgoraRtcAdapter {
 
     this.agoraClient.on("user-joined", async (user) => {
       if (this.agoraRTM && !this.agoraRTM2) {
-        console.error("user-joined", user.uid, this.occupantList);
+        console.info("user-joined", user.uid, this.occupantList);
         this.occupantList[user.uid]=user.uid;
         let copy= JSON.parse(JSON.stringify(this.occupantList));
         this.occupantListener(copy);
@@ -788,7 +788,7 @@ class AgoraRtcAdapter {
     });
     this.agoraClient.on("user-left", async (user) => {   
       if (this.agoraRTM && !this.agoraRTM2) {   
-        console.error("user-left", user.uid, this.occupantList);
+        console.info("user-left", user.uid, this.occupantList);
         delete this.occupantList[user.uid];
         let copy= JSON.parse(JSON.stringify(this.occupantList));
         this.occupantListener(copy);
