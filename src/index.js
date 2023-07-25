@@ -15,6 +15,7 @@ class AgoraRtcAdapter {
     this.logo = 0;
     this.mediaStreams = {};
     this.remoteClients = {};
+    this.occupantList = {};
     this.audioJitter = {};
     this.pendingMediaRequests = new Map();
     this.enableVideo = false;
@@ -41,6 +42,14 @@ class AgoraRtcAdapter {
     this.timeOffsets = [];
     this.avgTimeOffset = 0;
     this.agoraClient = null;
+
+    // RTM
+    this.agoraRTM = false;
+    this.agoraRTM2 = false;
+    this.rtmClient = null;
+    this.rtmUid = null;
+    this.rtmChannelName = null;
+    this.rtmChannel = null;
 
     this.easyrtc.setPeerOpenListener(clientId => {
       const clientConnection = this.easyrtc.getPeerConnectionByUserId(clientId);
@@ -133,6 +142,14 @@ class AgoraRtcAdapter {
       this.enableAvatar = true;
     }
 
+    if (obj.agoraRTM && obj.agoraRTM == 'true') {
+      this.agoraRTM = true;
+    }
+
+    if (obj.agoraRTM2 && obj.agoraRTM2 == 'true') {
+      this.agoraRTM2 = true;
+    }
+
     if (obj.showLocal && obj.showLocal == 'true') {
       this.showLocal = true;
     }
@@ -140,7 +157,9 @@ class AgoraRtcAdapter {
     if (obj.enableVideoFiltered && obj.enableVideoFiltered == 'true') {
       this.enableVideoFiltered = true;
     }
-    this.easyrtc.joinRoom(this.room, null);
+    if (!this.agoraRTM) {
+      this.easyrtc.joinRoom(this.room, null);
+    }
   }
 
   // options: { datachannel: bool, audio: bool, video: bool }
@@ -168,7 +187,7 @@ class AgoraRtcAdapter {
 
   setRoomOccupantListener(occupantListener) {
     console.log("BW73 setRoomOccupantListener ", occupantListener);
-
+    this.occupantListener=occupantListener;
     this.easyrtc.setRoomOccupantListener(function (roomName, occupants, primary) {
       occupantListener(occupants);
     });
@@ -179,6 +198,11 @@ class AgoraRtcAdapter {
     this.easyrtc.setDataChannelOpenListener(openListener);
     this.easyrtc.setDataChannelCloseListener(closedListener);
     this.easyrtc.setPeerListener(messageListener);
+    this.openListener = openListener;
+    this.messageListener = messageListener;
+    this.closedListener = closedListener;    
+    //window.AgoraRtcAdapter.messageListener = messageListener;
+    //console.error('messageListener 1', window.AgoraRtcAdapter.messageListener);
   }
 
   updateTimeOffset() {
@@ -213,12 +237,19 @@ class AgoraRtcAdapter {
   connect() {
     console.log("BW73 connect ");
     Promise.all([this.updateTimeOffset(), new Promise((resolve, reject) => {
-      this._connect(resolve, reject);
+      if (this.agoraRTM) {
+        this.clientId=this.generateId(10);
+        this.connectAgora(resolve, reject); //resolve, reject);
+      } else {
+        this._connect(resolve, reject);
+      }
     })]).then(([_, clientId]) => {
       console.log("BW73 connected " + clientId);
       this.clientId = clientId;
-      this._myRoomJoinTime = this._getRoomJoinTime(clientId);
-      this.connectAgora();
+      if (!this.agoraRTM) {
+        this._myRoomJoinTime = this._getRoomJoinTime(clientId);
+        this.connectAgora();
+      }
       this.connectSuccess(clientId);
     }).catch(this.connectFailure);
   }
@@ -228,7 +259,7 @@ class AgoraRtcAdapter {
   }
 
   startStreamConnection(clientId) {
-    console.log("BW73 startStreamConnection ", clientId);
+    console.error("BW73 startStreamConnection ", clientId);
     this.easyrtc.call(clientId, function (caller, media) {
       if (media === "datachannel") {
         NAF.log.write("Successfully started datachannel to ", caller);
@@ -241,8 +272,12 @@ class AgoraRtcAdapter {
   }
 
   closeStreamConnection(clientId) {
-    console.log("BW73 closeStreamConnection ", clientId);
-    this.easyrtc.hangup(clientId);
+    console.info("BW73 closeStreamConnection ", clientId);
+    if (this.agoraRTM) {
+      this.closedListener(clientId);  
+    } else {
+      this.easyrtc.hangup(clientId);
+    }    
   }
 
   sendMocap(mocap) {
@@ -269,7 +304,7 @@ class AgoraRtcAdapter {
       const transformer = new TransformStream({
         transform(chunk, controller) {
           const mocap = textEncoder.encode(that.mocapData);
-      //    console.error("appending ",that.mocapData);
+          //    console.error("appending ",that.mocapData);
           that.mocapPrevData = that.mocapData;
           that.mocapData = "";
           const frame = chunk.data;
@@ -287,14 +322,14 @@ class AgoraRtcAdapter {
             data[magicIndex + i] = that.CustomDataDetector.charCodeAt(i);
           }
           chunk.data = data.buffer;
-//          try {
-//            console.error("sending ", mocap.byteLength," to ", chunk.data.byteLength);
-            controller.enqueue(chunk);
-       //    console.error("sent ", mocap.byteLength," to ", chunk.data.byteLength);
+          //          try {
+          //            console.error("sending ", mocap.byteLength," to ", chunk.data.byteLength);
+          controller.enqueue(chunk);
+          //    console.error("sent ", mocap.byteLength," to ", chunk.data.byteLength);
 
-//          } catch (e) {
-//            console.error(e);
-//          }
+          //          } catch (e) {
+          //            console.error(e);
+          //          }
         }
       });
 
@@ -326,10 +361,6 @@ class AgoraRtcAdapter {
     }
   }
 
-  /*
-  async recreateDecoder(){
-    this.createDecoder(this.r_receiver,this.r_clientId);
-  }*/
 
   async createDecoder(receiver, clientId) {
     if (this.isChrome) {
@@ -387,80 +418,119 @@ class AgoraRtcAdapter {
 
       await new Promise(resolve => worker.onmessage = (event) => {
         if (event.data === 'started') {
-          //  console.warn("incoming 5a",clientId,event.data );
           resolve();
         }
-        //   console.warn("incoming 5",clientId,event.data );
-
       });
-      //  console.warn("incoming 6",clientId );
     }
   }
 
   async readStats() {
-
-
-    if (!this.agoraClient._users){
+    if (!this.agoraClient._users) {
       return;
     }
     for (var u = 0; u < this.agoraClient._users.length; u++) {
       if (this.agoraClient._users[u].audioTrack && this.agoraClient._users[u].audioTrack._mediaStreamTrack) {
-      await this.agoraClient._p2pChannel.connection.peerConnection.getStats(this.agoraClient._users[u].audioTrack._mediaStreamTrack).then(async stats => {
-        await stats.forEach(report => {
-          if (report.type === "inbound-rtp" && report.kind === "audio") {                        
-            var jitterBufferDelay = (report["jitterBufferDelay"]/report["jitterBufferEmittedCount"]).toFixed(3);
-            if (!isNaN(jitterBufferDelay)) {
-              this.audioJitter[this.agoraClient._users[u].uid]=jitterBufferDelay*1000;
-            } else {
-              this.audioJitter[this.agoraClient._users[u].uid]=80; // default ms
+        await this.agoraClient._p2pChannel.connection.peerConnection.getStats(this.agoraClient._users[u].audioTrack._mediaStreamTrack).then(async stats => {
+          await stats.forEach(report => {
+            if (report.type === "inbound-rtp" && report.kind === "audio") {
+              var jitterBufferDelay = (report["jitterBufferDelay"] / report["jitterBufferEmittedCount"]).toFixed(3);
+              if (!isNaN(jitterBufferDelay)) {
+                this.audioJitter[this.agoraClient._users[u].uid] = jitterBufferDelay * 1000;
+              } else {
+                this.audioJitter[this.agoraClient._users[u].uid] = 80; // default ms
+              }
             }
-          }
-        })
-      });
+          })
+        });
       }
     }
   }
 
-  sendData(clientId, dataType, data) {
-    //  console.log("BW73 sendData ", clientId, dataType, data);
-    // send via webrtc otherwise fallback to websockets
-    this.easyrtc.sendData(clientId, dataType, data);
+  handleRTM(senderId, text) {
+    const data = JSON.parse(text);
+    console.log("BW75 handleRTM", senderId, data);
+    //console.error('messageListener 2', window.AgoraRtcAdapter.messageListener);
+    window.AgoraRtcAdapter.messageListener(senderId, data.dataType, data.data);
   }
 
-  sendDataGuaranteed(clientId, dataType, data) {
-    //  console.log("BW73 sendDataGuaranteed ", clientId, dataType, data);
-    this.easyrtc.sendDataWS(clientId, dataType, data);
+  handleRTM2(senderId, text) {
+    const msg = JSON.parse(text);
+    const data = JSON.parse(msg.message);
+    //console.warn("BW75 handleRTM2", senderId, data.dataType, data.data);
+    //console.error('messageListener 2', window.AgoraRtcAdapter.messageListener);
+    window.AgoraRtcAdapter.messageListener(senderId, data.dataType, data.data);
+  }
+
+  sendData(clientId, dataType, data) {
+    console.log("BW75 sendData ", clientId, dataType, data);
+    return sendDataGuaranteed(clientId, dataType, data);
+  }
+
+  sendDataGuaranteed(destinationClientId, dataType, data) {
+    if (this.agoraRTM) {
+      this.sendAgoraRTM(dataType, data);
+      /*
+      if (this.rtmClient != null) {
+        let msg = JSON.stringify({ dataType: dataType, data: data });
+        this.rtmClient.sendMessageToPeer({text: msg}, destinationClientId);
+        console.log("BW75 sendDataGuaranteed ", destinationClientId, dataType, data);
+      } */
+    } else {
+     // console.log("BW72 DIRECT easyrtc.sendDataWS ",destinationClientId, dataType, data)
+     // this.easyrtc.sendDataWS(destinationClientId, dataType, data);
+     this.broadcastDataGuaranteed(dataType, data);
+    }
   }
 
   broadcastData(dataType, data) {
     return this.broadcastDataGuaranteed(dataType, data);
-    /*
-    console.log("BW73 broadcastData ", dataType, data);
-    var roomOccupants = this.easyrtc.getRoomOccupantsAsMap(this.room);
+  }
 
-    // Iterate over the keys of the easyrtc room occupants map.
-    // getRoomOccupantsAsArray uses Object.keys which allocates memory.
-    for (var roomOccupant in roomOccupants) {
-      if (roomOccupants[roomOccupant] && roomOccupant !== this.easyrtc.myEasyrtcid) {
-        // send via webrtc otherwise fallback to websockets
+  async sendAgoraRTM(dataType, data) {
+    
+   // console.warn('sending Agora RTM',dataType, data);
+    let msg = JSON.stringify({ dataType: dataType, data: data });
+    if (this.agoraRTM2) {
+      if (this.rtmClient != null) {   
+        const payload = { type: "text", message: msg };
+        const publishMessage = JSON.stringify(payload);
         try {
-          this.easyrtc.sendData(roomOccupant, dataType, data);
-        } catch (e) {
-           console.error("sendData",e);
+          await this.rtmClient.publish(
+            this.room,
+            publishMessage
+          );
+        } catch (error) {
+          console.log(error);
         }
+      } else {
+        console.error("uable to send message RTM2 ",dataType,data);
+      }
+    } else {
+      if (this.rtmChannel != null) {   
+        this.rtmChannel.sendMessage({ text: msg }).then(() => {
+          console.log("BW75 broadcastDataGuaranteed sent ", dataType, data);
+        }).catch(error => {
+          console.error('AgoraRTM send failure for rtmChannel', error);
+        });
+      } else {
+        console.error("uable to send message RTM1 ",dataType,data);
       }
     }
-    */
   }
 
   broadcastDataGuaranteed(dataType, data) {
-    // console.log("BW73 broadcastDataGuaranteed ", dataType, data);
-    var destination = { targetRoom: this.room };
-    this.easyrtc.sendDataWS(destination, dataType, data);
+    if (this.agoraRTM) {
+        this.sendAgoraRTM(dataType, data);
+    } else {
+        var destination = { targetRoom: this.room };
+        //console.log("BW72 BROAD easyrtc.sendDataWS ",destination, dataType, data)
+        //console.warn('sending Agora EASYRTC',dataType, data);
+        this.easyrtc.sendDataWS(destination, dataType, data); 
+    }
   }
 
   getConnectStatus(clientId) {
-    //  console.log("BW73 getConnectStatus ", clientId);
+    console.error("BW73 getConnectStatus ", clientId);
     var status = this.easyrtc.getConnectStatus(clientId);
 
     if (status == this.easyrtc.IS_CONNECTED) {
@@ -632,6 +702,18 @@ class AgoraRtcAdapter {
     return average;
   }
 
+   generateId(length) {
+    let result = '';
+    const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    const charactersLength = characters.length;
+    let counter = 0;
+    while (counter < length) {
+      result += characters.charAt(Math.floor(Math.random() * charactersLength));
+      counter += 1;
+    }
+    return result;
+}
+
   voiceActivityDetection() {
     if (!this._vad_audioTrack || !this._vad_audioTrack._enabled)
       return;
@@ -656,13 +738,13 @@ class AgoraRtcAdapter {
       this._vad_exceedCount = 0;
     }
 
-   
+
     if (this._vad_exceedCount > this._vad_exceedCountThresholdLow) {
       //AgoraRTCUtilEvents.emit("VoiceActivityDetectedFast", this._vad_exceedCount);
       window._state_stop_at = Date.now();
       //console.log("BOOM", audioLevel, background, this._vad_SilenceOffeset,this._vad_exceedCount,this._vad_exceedCountThresholdLow);
-//    } else {
-//      console.log(audioLevel, background, this._vad_SilenceOffeset,this._vad_exceedCount,this._vad_exceedCountThresholdLow);
+      //    } else {
+      //      console.log(audioLevel, background, this._vad_SilenceOffeset,this._vad_exceedCount,this._vad_exceedCountThresholdLow);
 
     }
 
@@ -675,17 +757,17 @@ class AgoraRtcAdapter {
 
   }
 
-  async connectAgora() {
+  async connectAgora(success, failure) {
     // Add an event listener to play remote tracks when remote user publishes.
     var that = this;
 
     this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "vp8" });
     AgoraRTC.setParameter('SYNC_GROUP', false);
-//    AgoraRTC.setParameter('SUBSCRIBE_TWCC', true);
+    //    AgoraRTC.setParameter('SUBSCRIBE_TWCC', true);
     setInterval(() => {
       this.readStats();
     }, 1000);
-    
+
 
     if (this.enableVideoFiltered || this.enableVideo || this.enableAudio) {
       //this.agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
@@ -697,8 +779,22 @@ class AgoraRtcAdapter {
     }
 
     this.agoraClient.on("user-joined", async (user) => {
-      console.warn("user-joined", user);
+      if (this.agoraRTM && !this.agoraRTM2) {
+        console.error("user-joined", user.uid, this.occupantList);
+        this.occupantList[user.uid]=user.uid;
+        let copy= JSON.parse(JSON.stringify(this.occupantList));
+        this.occupantListener(copy);
+      }
     });
+    this.agoraClient.on("user-left", async (user) => {   
+      if (this.agoraRTM && !this.agoraRTM2) {   
+        console.error("user-left", user.uid, this.occupantList);
+        delete this.occupantList[user.uid];
+        let copy= JSON.parse(JSON.stringify(this.occupantList));
+        this.occupantListener(copy);
+      }
+    });
+    
     this.agoraClient.on("user-published", async (user, mediaType) => {
 
       let clientId = user.uid;
@@ -710,7 +806,12 @@ class AgoraRtcAdapter {
       const clientMediaStreams = that.mediaStreams[clientId] = that.mediaStreams[clientId] || {};
 
       if (mediaType === 'audio') {
-        //user.audioTrack.play();      
+        //if (navigator.platform.indexOf('iPad')>-1 || navigator.platform.indexOf('iPhone')>-1)
+        //{ // too quiet
+        //          console.log("iOS play speaker");
+          user.audioTrack.play();
+        //      }
+
         const audioStream = new MediaStream();
         console.log("user.audioTrack ", user.audioTrack._mediaStreamTrack);
         audioStream.addTrack(user.audioTrack._mediaStreamTrack);
@@ -762,18 +863,17 @@ class AgoraRtcAdapter {
       const receivers = pc.getReceivers();
       for (let i = 0; i < receivers.length; i++) {
         if (receivers[i].track && receivers[i].track.id === enc_id) {
-          console.warn("Match", mediaType, enc_id);
+          //console.warn("Match", mediaType, enc_id);
           //          this.r_receiver=receivers[i];
           //this.r_clientId=clientId;
           this.createDecoder(receivers[i], clientId);
         }
       }
-
     });
 
     this.agoraClient.on("user-unpublished", that.handleUserUnpublished);
 
-    console.log("connect agora ");
+    console.log("connect agora " + this.clientId);
     // Join a channel and create local tracks. Best practice is to use Promise.all and run them concurrently.
     // o
 
@@ -800,7 +900,7 @@ class AgoraRtcAdapter {
       if (window.gum_stream) { // avoid double allow iOs
 
         audio_track = AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: window.gum_stream.getAudioTracks()[0] });
-        console.warn(audio_track, "audio_track");
+        //console.warn(audio_track, "audio_track");
       }
       else {
         audio_track = AgoraRTC.createMicrophoneAudioTrack()
@@ -816,11 +916,9 @@ class AgoraRtcAdapter {
           this.voiceActivityDetection();
         }, this._voiceActivityDetectionFrequency);
       }
-
     } else {
       this.userid = await this.agoraClient.join(this.appid, this.room, this.token || null, this.clientId || null);
     }
-
 
     // select facetime camera if exists
     if (this.enableVideo && !this.enableVideoFiltered) {
@@ -884,7 +982,93 @@ class AgoraRtcAdapter {
     }
 
     // RTM
+    if (this.agoraRTM) {
+      if (this.clientId == null) {
+        this.clientId = 'X' + this.userid;
+      }
+      this.rtmUid = this.clientId;
+      if (this.agoraRTM2) { // 2.x RTM
+        AgoraRTM.setArea({ areaCodes: ["GLOBAL"] });        
+        this.rtmClient = new AgoraRTM.RTM(this.appid, this.rtmUid, {presenceTimeout: 5}); 
+        this.rtmClient.addEventListener({          
+          message: (eventArgs) => { // Message event handler
+            window.AgoraRtcAdapter.handleRTM2(eventArgs.publisher, eventArgs.message);            
+          },          
+          presence: (eventArgs) => { // Presence event handler
+            if (eventArgs.eventType === "SNAPSHOT") {
+                for (let u=0; u<eventArgs.snapshot.length; u++){
+                  let present=this.occupantList[eventArgs.snapshot[u].userId];
+                  this.occupantList[eventArgs.snapshot[u].userId]=eventArgs.snapshot[u].userId;
+                  let copy= JSON.parse(JSON.stringify(this.occupantList));
+                  this.occupantListener(copy);
+                  if (!present){
+                   // console.warn("openListener",eventArgs.snapshot[u].userId);
+                    this.openListener(eventArgs.snapshot[u].userId);
+                  }
+                }
+            } else if (eventArgs.eventType === "REMOTE_JOIN") {
+                  let present=this.occupantList[eventArgs.publisher];
+                  this.occupantList[eventArgs.publisher]=eventArgs.publisher;
+                  let copy= JSON.parse(JSON.stringify(this.occupantList));
+                  this.occupantListener(copy);
+                  if (!present){
+                   // console.warn("openListener",eventArgs.publisher);
+                    this.openListener(eventArgs.publisher);
+                  }
+            } else if (eventArgs.eventType === "REMOTE_TIMEOUT" || eventArgs.eventType === "REMOTE_LEAVE") {
+                  delete this.occupantList[eventArgs.publisher];
+                  let copy= JSON.parse(JSON.stringify(this.occupantList));
+                  this.occupantListener(copy);              
+            } 
+          },
+        });
 
+        window.addEventListener("beforeunload", () =>{
+          window.AgoraRtcAdapter.rtmClient.logout();
+        });
+
+        try {
+            const result = await this.rtmClient.login();
+            await this.rtmClient.subscribe(this.room);
+            console.log('rtm LOGIN SUCCESS for: '+ this.rtmUid,result);
+            success(this.clientId);
+        } catch (status) {
+            console.error('rtm LOGIN FAILED for: '+ this.rtmUid, status);
+        }
+      } else {  // rtm 1
+        this.rtmClient = AgoraRTM.createInstance(this.appid, { logFilter: AgoraRTM.LOG_FILTER_OFF });
+
+        this.rtmClient.on('ConnectionStateChanged', (newState, reason) => {
+          console.log('this.rtmClient connection state changed to ' + newState + ' reason: ' + reason);
+          if (newState == "CONNECTED") {
+          } else {
+          }
+        });
+
+        this.rtmClient.on('MessageFromPeer', ({ text }, senderId) => {
+          this.handleRTM(senderId, text);
+        });
+
+
+        this.rtmClient.login({ token: null, uid: this.rtmUid }).then(() => {
+          this.rtmChannel = this.rtmClient.createChannel(this.room);
+          this.rtmChannel.on('MemberJoined', (memberId) => {
+          });
+          this.rtmChannel.on('MemberLeft', (memberId) => {
+          });
+          this.rtmChannel.join().then(() => {
+            this.rtmChannel.on('ChannelMessage', ({ text }, senderId) => {
+              this.handleRTM(senderId, text);
+            });
+            success(this.clientId);//[this.clientId,this.clientId]);
+          }).catch(error => {
+            console.log('AgoraRTM client join failure', error);
+          });
+        }).catch(error => {
+          console.log('AgoraRTM client login failure', error);
+        });
+      }
+   }
   }
 
   /**
@@ -893,6 +1077,7 @@ class AgoraRtcAdapter {
 
   async _connect(connectSuccess, connectFailure) {
     var that = this;
+   // let x = function () { /* empty because ... */ };
     await that.easyrtc.connect(that.app, connectSuccess, connectFailure);
   }
 
@@ -908,5 +1093,4 @@ class AgoraRtcAdapter {
 }
 
 NAF.adapters.register("agorartc", AgoraRtcAdapter);
-
 module.exports = AgoraRtcAdapter;
