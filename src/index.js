@@ -22,8 +22,9 @@ class AgoraRtcAdapter {
     this.enableVideoFiltered = false;
     this.enableAudio = false;
     this.enableAvatar = false;
+    this.remoteAudioTrack = null;
 
-    this.localTracks = { videoTrack: null, audioTrack: null };
+    this.localTracks = { videoTrack: null, audioTrack: null, musicTrack: null };
     window.localTracks = this.localTracks;
     this.token = null;
     this.clientId = null;
@@ -44,6 +45,7 @@ class AgoraRtcAdapter {
     this.agoraClient = null;
 
     // RTM
+    this.syncObjects = true;
     this.agoraRTM = false;
     this.agoraRTM2 = false;
     this.rtmClient = null;
@@ -51,14 +53,16 @@ class AgoraRtcAdapter {
     this.rtmChannelName = null;
     this.rtmChannel = null;
 
-    this.easyrtc.setPeerOpenListener(clientId => {
-      const clientConnection = this.easyrtc.getPeerConnectionByUserId(clientId);
-      this.remoteClients[clientId] = clientConnection;
-    });
+    if (this.easyrtc) {
+      this.easyrtc.setPeerOpenListener(clientId => {
+        const clientConnection = this.easyrtc.getPeerConnectionByUserId(clientId);
+        this.remoteClients[clientId] = clientConnection;
+      });
 
-    this.easyrtc.setPeerClosedListener(clientId => {
-      delete this.remoteClients[clientId];
-    });
+      this.easyrtc.setPeerClosedListener(clientId => {
+        delete this.remoteClients[clientId];
+      });
+    }
 
     this.isChrome = (navigator.userAgent.indexOf('Firefox') === -1 && navigator.userAgent.indexOf('Chrome') > -1);
 
@@ -115,7 +119,9 @@ class AgoraRtcAdapter {
 
   setServerUrl(url) {
     console.log("BW73 setServerUrl ", url);
-    this.easyrtc.setSocketUrl(url);
+    if (this.easyrtc) {
+      this.easyrtc.setSocketUrl(url);
+    }
   }
 
   setApp(appName) {
@@ -142,9 +148,14 @@ class AgoraRtcAdapter {
       this.enableAvatar = true;
     }
 
+    if (obj.syncObjects && obj.syncObjects == 'false') {
+      this.syncObjects = false;
+    }
+
     if (obj.agoraRTM && obj.agoraRTM == 'true') {
       this.agoraRTM = true;
     }
+
 
     if (obj.agoraRTM2 && obj.agoraRTM2 == 'true') {
       this.agoraRTM2 = true;
@@ -164,14 +175,16 @@ class AgoraRtcAdapter {
 
   // options: { datachannel: bool, audio: bool, video: bool }
   setWebRtcOptions(options) {
-    console.log("BW73 setWebRtcOptions ", options);
-    // this.easyrtc.enableDebug(true);
-    this.easyrtc.enableDataChannels(options.datachannel);
-
-    // using Agora
+  // using Agora
     this.enableVideo = options.video;
     this.enableAudio = options.audio;
 
+    if (!this.easyrtc){
+      return;
+    }
+    console.log("BW73 setWebRtcOptions ", options);
+    // this.easyrtc.enableDebug(true);
+    this.easyrtc.enableDataChannels(options.datachannel);
     // not easyrtc
     this.easyrtc.enableVideo(false);
     this.easyrtc.enableAudio(false);
@@ -188,6 +201,10 @@ class AgoraRtcAdapter {
   setRoomOccupantListener(occupantListener) {
     console.log("BW73 setRoomOccupantListener ", occupantListener);
     this.occupantListener=occupantListener;
+
+    if (!this.easyrtc){
+      return;
+    }
     this.easyrtc.setRoomOccupantListener(function (roomName, occupants, primary) {
       occupantListener(occupants);
     });
@@ -195,14 +212,17 @@ class AgoraRtcAdapter {
 
   setDataChannelListeners(openListener, closedListener, messageListener) {
     console.log("BW73 setDataChannelListeners  ", openListener, closedListener, messageListener);
-    this.easyrtc.setDataChannelOpenListener(openListener);
-    this.easyrtc.setDataChannelCloseListener(closedListener);
-    this.easyrtc.setPeerListener(messageListener);
+
+
     this.openListener = openListener;
     this.messageListener = messageListener;
     this.closedListener = closedListener;    
-    //window.AgoraRtcAdapter.messageListener = messageListener;
-    //console.error('messageListener 1', window.AgoraRtcAdapter.messageListener);
+    if (!this.easyrtc){
+      return;
+    }
+    this.easyrtc.setDataChannelOpenListener(openListener);
+    this.easyrtc.setDataChannelCloseListener(closedListener);
+    this.easyrtc.setPeerListener(messageListener);
   }
 
   updateTimeOffset() {
@@ -235,7 +255,8 @@ class AgoraRtcAdapter {
   }
 
   connect() {
-    console.log("BW73 connect ");
+
+    console.log("BW73 connect");
     Promise.all([this.updateTimeOffset(), new Promise((resolve, reject) => {
       if (this.agoraRTM) {
         this.clientId=this.generateId(10);
@@ -259,6 +280,9 @@ class AgoraRtcAdapter {
   }
 
   startStreamConnection(clientId) {
+    if (!this.easyrtc){
+      return;
+    }
     console.error("BW73 startStreamConnection ", clientId);
     this.easyrtc.call(clientId, function (caller, media) {
       if (media === "datachannel") {
@@ -279,6 +303,8 @@ class AgoraRtcAdapter {
       this.easyrtc.hangup(clientId);
     }    
   }
+
+
 
   sendMocap(mocap) {
     if (mocap == this.mocapPrevData) {
@@ -303,6 +329,8 @@ class AgoraRtcAdapter {
       var that = this;
       const transformer = new TransformStream({
         transform(chunk, controller) {
+          let d=chunk.data;
+          let v=chunk.data.byteLength;
           const mocap = textEncoder.encode(that.mocapData);
           //    console.error("appending ",that.mocapData);
           that.mocapPrevData = that.mocapData;
@@ -322,21 +350,21 @@ class AgoraRtcAdapter {
             data[magicIndex + i] = that.CustomDataDetector.charCodeAt(i);
           }
           chunk.data = data.buffer;
-          //          try {
-          //            console.error("sending ", mocap.byteLength," to ", chunk.data.byteLength);
+          let y=chunk.data.byteLength;
+          if (y>=1000) {
+            console.warn('audio frame too large, skipping... ',v,y,y-v, that.mocapPrevData);
+            chunk.data=d;
+          } 
+         // console.warn(v,y,y-v);
+         // console.warn(v,y,y-v);
           controller.enqueue(chunk);
-          //    console.error("sent ", mocap.byteLength," to ", chunk.data.byteLength);
-
-          //          } catch (e) {
-          //            console.error(e);
-          //          }
         }
       });
 
       streams.readable.pipeThrough(transformer).pipeTo(streams.writable);
     } else {
       var that = this;
-      const worker = new Worker('/dist/script-transform-worker.js');
+      const worker = new Worker('./dist/script-transform-worker.js');
       await new Promise(resolve => worker.onmessage = (event) => {
         if (event.data === 'registered') {
           resolve();
@@ -370,26 +398,28 @@ class AgoraRtcAdapter {
 
       const transformer = new TransformStream({
         transform(chunk, controller) {
-          const view = new DataView(chunk.data);
-          const magicData = new Uint8Array(chunk.data, chunk.data.byteLength - that.CustomDataDetector.length, that.CustomDataDetector.length);
-          let magic = [];
-          for (let i = 0; i < that.CustomDataDetector.length; i++) {
-            magic.push(magicData[i]);
+            if (chunk.data.byteLength - that.CustomDataDetector.length>0) {
+            const view = new DataView(chunk.data);
+            const magicData = new Uint8Array(chunk.data, chunk.data.byteLength - that.CustomDataDetector.length, that.CustomDataDetector.length);
+            let magic = [];
+            for (let i = 0; i < that.CustomDataDetector.length; i++) {
+              magic.push(magicData[i]);
 
-          }
-          let magicString = String.fromCharCode(...magic);
-          if (magicString === that.CustomDataDetector) {
-            const mocapLen = view.getUint32(chunk.data.byteLength - (that.CustomDatLengthByteCount + that.CustomDataDetector.length), false);
-            const frameSize = chunk.data.byteLength - (mocapLen + that.CustomDatLengthByteCount + that.CustomDataDetector.length);
-            const mocapBuffer = new Uint8Array(chunk.data, frameSize, mocapLen);
-            const mocap = textDecoder.decode(mocapBuffer)
-            if (mocap.length > 0) {
-              window.remoteMocap(mocap + "," + clientId);
             }
-            const frame = chunk.data;
-            chunk.data = new ArrayBuffer(frameSize);
-            const data = new Uint8Array(chunk.data);
-            data.set(new Uint8Array(frame, 0, frameSize));
+            let magicString = String.fromCharCode(...magic);
+            if (magicString === that.CustomDataDetector) {
+              const mocapLen = view.getUint32(chunk.data.byteLength - (that.CustomDatLengthByteCount + that.CustomDataDetector.length), false);
+              const frameSize = chunk.data.byteLength - (mocapLen + that.CustomDatLengthByteCount + that.CustomDataDetector.length);
+              const mocapBuffer = new Uint8Array(chunk.data, frameSize, mocapLen);
+              const mocap = textDecoder.decode(mocapBuffer)
+              if (mocap.length > 0) {
+                window.remoteMocap(mocap + "," + clientId);
+              }
+              const frame = chunk.data;
+              chunk.data = new ArrayBuffer(frameSize);
+              const data = new Uint8Array(chunk.data);
+              data.set(new Uint8Array(frame, 0, frameSize));
+            }
           }
           controller.enqueue(chunk);
         }
@@ -398,7 +428,8 @@ class AgoraRtcAdapter {
     } else {
       this.receiverChannel = new MessageChannel;
       var that = this;
-      const worker = new Worker('/dist/script-transform-worker.js');
+     // const worker = new Worker('/dist/script-transform-worker.js');
+      const worker = new Worker('./dist/script-transform-worker.js');
       await new Promise(resolve => worker.onmessage = (event) => {
         if (event.data === 'registered') {
 
@@ -468,17 +499,9 @@ class AgoraRtcAdapter {
 
   sendDataGuaranteed(destinationClientId, dataType, data) {
     if (this.agoraRTM) {
-      this.sendAgoraRTM(dataType, data);
-      /*
-      if (this.rtmClient != null) {
-        let msg = JSON.stringify({ dataType: dataType, data: data });
-        this.rtmClient.sendMessageToPeer({text: msg}, destinationClientId);
-        console.log("BW75 sendDataGuaranteed ", destinationClientId, dataType, data);
-      } */
+        this.sendAgoraRTM(dataType, data);      
     } else {
-     // console.log("BW72 DIRECT easyrtc.sendDataWS ",destinationClientId, dataType, data)
-     // this.easyrtc.sendDataWS(destinationClientId, dataType, data);
-     this.broadcastDataGuaranteed(dataType, data);
+       this.broadcastDataGuaranteed(dataType, data);
     }
   }
 
@@ -487,7 +510,9 @@ class AgoraRtcAdapter {
   }
 
   async sendAgoraRTM(dataType, data) {
-    
+    if (!this.syncObjects) {
+      return;
+    }
    // console.warn('sending Agora RTM',dataType, data);
     let msg = JSON.stringify({ dataType: dataType, data: data });
     if (this.agoraRTM2) {
@@ -523,14 +548,15 @@ class AgoraRtcAdapter {
         this.sendAgoraRTM(dataType, data);
     } else {
         var destination = { targetRoom: this.room };
-        //console.log("BW72 BROAD easyrtc.sendDataWS ",destination, dataType, data)
-        //console.warn('sending Agora EASYRTC',dataType, data);
         this.easyrtc.sendDataWS(destination, dataType, data); 
     }
   }
 
   getConnectStatus(clientId) {
-    //console.error("BW73 getConnectStatus ", clientId);
+    if (!this.easyrtc){
+      //console.trace();
+      return  NAF.adapters.IS_CONNECTED;
+    }
     var status = this.easyrtc.getConnectStatus(clientId);
 
     if (status == this.easyrtc.IS_CONNECTED) {
@@ -543,12 +569,7 @@ class AgoraRtcAdapter {
   }
 
   getMediaStream(clientId, streamName = "audio") {
-
     console.log("BW73 getMediaStream ", clientId, streamName);
-    // if ( streamName = "audio") {
-    //streamName = "bod_audio";
-    //}
-
     if (this.mediaStreams[clientId] && this.mediaStreams[clientId][streamName]) {
       NAF.log.write(`Already had ${streamName} for ${clientId}`);
       return Promise.resolve(this.mediaStreams[clientId][streamName]);
@@ -645,6 +666,9 @@ class AgoraRtcAdapter {
   }
 
   addLocalMediaStream(stream, streamName) {
+    if (!this.easyrtc){
+      return;
+    }
     console.log("BW73 addLocalMediaStream ", stream, streamName);
     const easyrtc = this.easyrtc;
     streamName = streamName || stream.id;
@@ -660,23 +684,33 @@ class AgoraRtcAdapter {
   }
 
   removeLocalMediaStream(streamName) {
+    delete this.mediaStreams["local"][streamName];
+    if (!this.easyrtc){
+      return;
+    }
     console.log("BW73 removeLocalMediaStream ", streamName);
     this.easyrtc.closeLocalMediaStream(streamName);
-    delete this.mediaStreams["local"][streamName];
+
   }
 
   enableMicrophone(enabled) {
-    console.log("BW73 enableMicrophone ", enabled);
+    if (!this.easyrtc){
+      return;
+    }
     this.easyrtc.enableMicrophone(enabled);
   }
 
   enableCamera(enabled) {
-    console.log("BW73 enableCamera ", enabled);
+    if (!this.easyrtc){
+      return;
+    }
     this.easyrtc.enableCamera(enabled);
   }
 
   disconnect() {
-    console.log("BW73 disconnect ");
+    if (!this.easyrtc){
+      return;
+    }
     this.easyrtc.disconnect();
   }
 
@@ -740,12 +774,7 @@ class AgoraRtcAdapter {
 
 
     if (this._vad_exceedCount > this._vad_exceedCountThresholdLow) {
-      //AgoraRTCUtilEvents.emit("VoiceActivityDetectedFast", this._vad_exceedCount);
-      window._state_stop_at = Date.now();
-      //console.log("BOOM", audioLevel, background, this._vad_SilenceOffeset,this._vad_exceedCount,this._vad_exceedCountThresholdLow);
-      //    } else {
-      //      console.log(audioLevel, background, this._vad_SilenceOffeset,this._vad_exceedCount,this._vad_exceedCountThresholdLow);
-
+       window._state_stop_at = Date.now();
     }
 
     if (this._vad_exceedCount > this._vad_exceedCountThreshold) {
@@ -754,8 +783,50 @@ class AgoraRtcAdapter {
       window._state_stop_at = Date.now();
       //   console.error("VAD ",Date.now()-window._state_stop_at);
     }
-
   }
+
+    async stopMusic() {
+      if (this.localTracks.musicTrack) {
+        this.localTracks.musicTrack.stop();
+        await this.agoraClient.unpublish(this.localTracks.musicTrack);
+      }
+    }
+
+    async stopTrack() {
+      if (this.localTracks.musicTrack) {
+        this.localTracks.musicTrack.stop();
+        await this.agoraClient.unpublish(this.localTracks.musicTrack);
+      }
+    }
+
+    async playMusic(path,volume) {
+      if (this.localTracks.musicTrack) {
+        this.localTracks.musicTrack.stop();
+        await this.agoraClient.unpublish(this.localTracks.musicTrack);
+      }
+      this.localTracks.musicTrack = await AgoraRTC.createBufferSourceAudioTrack({
+        source: path, encoderConfig: { bitrate:110, stereo:true}
+      });
+      this.localTracks.musicTrack.setVolume(volume);
+      await this.agoraClient.publish(this.localTracks.musicTrack);
+      this.localTracks.musicTrack.play();
+      this.localTracks.musicTrack.startProcessAudioBuffer({ cycle: 1 });
+    }
+
+
+    async playTrack(track,volume) {
+      if (this.localTracks.musicTrack) {
+        this.localTracks.musicTrack.stop();
+        await this.agoraClient.unpublish(this.localTracks.musicTrack);
+      }
+      this.localTracks.musicTrack = await AgoraRTC.createCustomAudioTrack({
+        mediaStreamTrack: track
+      });
+      this.localTracks.musicTrack.setVolume(volume);
+      await this.agoraClient.publish(this.localTracks.musicTrack);
+      //this.localTracks.musicTrack.play();
+    }
+
 
   async connectAgora(success, failure) {
     // Add an event listener to play remote tracks when remote user publishes.
@@ -770,13 +841,8 @@ class AgoraRtcAdapter {
 
 
     if (this.enableVideoFiltered || this.enableVideo || this.enableAudio) {
-      //this.agoraClient = AgoraRTC.createClient({ mode: "rtc", codec: "vp8" });
-      //this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "h264" });
       this.agoraClient.setClientRole("host");
-    } else {
-      //this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "h264" });
-      //this.agoraClient = AgoraRTC.createClient({ mode: "live", codec: "vp8" });
-    }
+    } 
 
     this.agoraClient.on("user-joined", async (user) => {
       if (this.agoraRTM && !this.agoraRTM2) {
@@ -810,6 +876,7 @@ class AgoraRtcAdapter {
         //{ // too quiet
         //          console.log("iOS play speaker");
           user.audioTrack.play();
+          that.remoteAudioTrack=user.audioTrack;
         //      }
 
         const audioStream = new MediaStream();
@@ -831,10 +898,6 @@ class AgoraRtcAdapter {
 
       if (clientId == 'CCC') {
         if (mediaType === 'video') {
-          // document.getElementById("video360").srcObject=videoStream;
-          //document.querySelector("#video360").setAttribute("src", videoStream);
-          //document.querySelector("#video360").setAttribute("src", user.videoTrack._mediaStreamTrack);
-          //document.querySelector("#video360").srcObject= user.videoTrack._mediaStreamTrack;
           document.querySelector("#video360").srcObject = videoStream;
           document.querySelector("#video360").play();
         }
@@ -898,12 +961,13 @@ class AgoraRtcAdapter {
     } else if (this.enableAudio) {
       let audio_track;
       if (window.gum_stream) { // avoid double allow iOs
-
-        audio_track = AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: window.gum_stream.getAudioTracks()[0] });
+       // audio_track = AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: window.gum_stream.getAudioTracks()[0],  encoderConfig: { bitrate:180, stereo:false} });
+       audio_track = AgoraRTC.createCustomAudioTrack({ mediaStreamTrack: window.gum_stream.getAudioTracks()[0],  encoderConfig: { bitrate:180, stereo:false} });
         //console.warn(audio_track, "audio_track");
       }
       else {
-        audio_track = AgoraRTC.createMicrophoneAudioTrack()
+        //audio_track = AgoraRTC.createMicrophoneAudioTrack({encoderConfig: {bitrate:128, stereo:true}})
+        audio_track = AgoraRTC.createMicrophoneAudioTrack();
       }
 
       [this.userid, this.localTracks.audioTrack] = await Promise.all([
@@ -987,6 +1051,9 @@ class AgoraRtcAdapter {
         this.clientId = 'X' + this.userid;
       }
       this.rtmUid = this.clientId;
+      if (!this.syncObjects){
+          return;
+      }
       if (this.agoraRTM2) { // 2.x RTM
         AgoraRTM.setArea({ areaCodes: ["GLOBAL"] });        
         this.rtmClient = new AgoraRTM.RTM(this.appid, this.rtmUid, {presenceTimeout: 5}); 
@@ -1078,11 +1145,17 @@ class AgoraRtcAdapter {
   async _connect(connectSuccess, connectFailure) {
     var that = this;
    // let x = function () { /* empty because ... */ };
+   if (!this.easyrtc){
+    return;
+  }
     await that.easyrtc.connect(that.app, connectSuccess, connectFailure);
   }
 
   _getRoomJoinTime(clientId) {
     var myRoomId = this.room; //NAF.room;
+    if (!this.easyrtc){
+      return;
+    }
     var joinTime = this.easyrtc.getRoomOccupantsAsMap(myRoomId)[clientId].roomJoinTime;
     return joinTime;
   }

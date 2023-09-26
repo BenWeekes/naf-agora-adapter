@@ -1,1 +1,1 @@
-npm run build ; cp dist/naf-agora-adapter.js ../vr_rte/examples/dist/naf-agora-adapter.js
+npm run build ; cp dist/naf-agora-adapter.js ../agora-vr/examples/dist/naf-agora-adapter.js
